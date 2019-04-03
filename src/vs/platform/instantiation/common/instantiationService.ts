@@ -4,14 +4,20 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { illegalState } from 'vs/base/common/errors';
-import { create } from 'vs/base/common/types';
 import { Graph } from 'vs/platform/instantiation/common/graph';
 import { SyncDescriptor } from 'vs/platform/instantiation/common/descriptors';
 import { ServiceIdentifier, IInstantiationService, ServicesAccessor, _util, optional } from 'vs/platform/instantiation/common/instantiation';
 import { ServiceCollection } from 'vs/platform/instantiation/common/serviceCollection';
+import { IdleValue } from 'vs/base/common/async';
 
 // TRACING
 const _enableTracing = false;
+
+// PROXY
+// Ghetto-declare of the global Proxy object. This isn't the proper way
+// but allows us to run this code in the browser without IE11.
+declare var Proxy: any;
+const _canUseProxy = typeof Proxy === 'function';
 
 export class InstantiationService implements IInstantiationService {
 
@@ -19,7 +25,7 @@ export class InstantiationService implements IInstantiationService {
 
 	protected readonly _services: ServiceCollection;
 	protected readonly _strict: boolean;
-	protected readonly _parent: InstantiationService;
+	protected readonly _parent?: InstantiationService;
 
 	constructor(services: ServiceCollection = new ServiceCollection(), strict: boolean = false, parent?: InstantiationService) {
 		this._services = services;
@@ -37,7 +43,7 @@ export class InstantiationService implements IInstantiationService {
 		let _trace = Trace.traceInvocation(fn);
 		let _done = false;
 		try {
-			let accessor = {
+			const accessor: ServicesAccessor = {
 				get: <T>(id: ServiceIdentifier<T>, isOptional?: typeof optional) => {
 
 					if (_done) {
@@ -51,7 +57,7 @@ export class InstantiationService implements IInstantiationService {
 					return result;
 				}
 			};
-			return fn.apply(undefined, [accessor].concat(args));
+			return fn.apply(undefined, [accessor, ...args]);
 		} finally {
 			_done = true;
 			_trace.stop();
@@ -101,7 +107,7 @@ export class InstantiationService implements IInstantiationService {
 		}
 
 		// now create the instance
-		return <T>create.apply(null, [ctor].concat(args, serviceArgs));
+		return <T>new ctor(...[...args, ...serviceArgs]);
 	}
 
 	private _setServiceInstance<T>(id: ServiceIdentifier<T>, instance: T): void {
@@ -146,7 +152,7 @@ export class InstantiationService implements IInstantiationService {
 		let count = 0;
 		const stack = [{ id, desc, _trace }];
 		while (stack.length) {
-			const item = stack.pop();
+			const item = stack.pop()!;
 			graph.lookupOrInsertNode(item);
 
 			// TODO@joh use the graph to find a cycle
@@ -186,7 +192,7 @@ export class InstantiationService implements IInstantiationService {
 
 			for (let { data } of roots) {
 				// create instance and overwrite the service collections
-				const instance = this._createServiceInstanceWithOwner(data.id, data.desc.ctor, data.desc.staticArguments, data._trace);
+				const instance = this._createServiceInstanceWithOwner(data.id, data.desc.ctor, data.desc.staticArguments, data.desc.supportsDelayedInstantiation, data._trace);
 				this._setServiceInstance(data.id, instance);
 				graph.removeNode(data);
 			}
@@ -195,16 +201,36 @@ export class InstantiationService implements IInstantiationService {
 		return <T>this._getServiceInstanceOrDescriptor(id);
 	}
 
-	private _createServiceInstanceWithOwner<T>(id: ServiceIdentifier<T>, ctor: any, args: any[] = [], _trace: Trace): T {
+	private _createServiceInstanceWithOwner<T>(id: ServiceIdentifier<T>, ctor: any, args: any[] = [], supportsDelayedInstantiation: boolean, _trace: Trace): T {
 		if (this._services.get(id) instanceof SyncDescriptor) {
-			return this._createServiceInstance(ctor, args, _trace);
+			return this._createServiceInstance(ctor, args, supportsDelayedInstantiation, _trace);
+		} else if (this._parent) {
+			return this._parent._createServiceInstanceWithOwner(id, ctor, args, supportsDelayedInstantiation, _trace);
 		} else {
-			return this._parent._createServiceInstanceWithOwner(id, ctor, args, _trace);
+			throw new Error('illegalState - creating UNKNOWN service instance');
 		}
 	}
 
-	protected _createServiceInstance<T>(ctor: any, args: any[] = [], _trace: Trace): T {
-		return this._createInstance(ctor, args, _trace);
+	private _createServiceInstance<T>(ctor: any, args: any[] = [], _supportsDelayedInstantiation: boolean, _trace: Trace): T {
+		if (!_supportsDelayedInstantiation || !_canUseProxy) {
+			// eager instantiation or no support JS proxies (e.g. IE11)
+			return this._createInstance(ctor, args, _trace);
+
+		} else {
+			// Return a proxy object that's backed by an idle value. That
+			// strategy is to instantiate services in our idle time or when actually
+			// needed but not when injected into a consumer
+			const idle = new IdleValue(() => this._createInstance(ctor, args, _trace));
+			return <T>new Proxy(Object.create(null), {
+				get(_target: T, prop: PropertyKey): any {
+					return idle.getValue()[prop];
+				},
+				set(_target: T, p: PropertyKey, value: any): boolean {
+					idle.getValue()[p] = value;
+					return true;
+				}
+			});
+		}
 	}
 }
 
@@ -236,7 +262,7 @@ class Trace {
 
 	private constructor(
 		readonly type: TraceType,
-		readonly name: string
+		readonly name: string | null
 	) { }
 
 	branch(id: ServiceIdentifier<any>, first: boolean): Trace {
@@ -255,7 +281,7 @@ class Trace {
 			let res: string[] = [];
 			let prefix = new Array(n + 1).join('\t');
 			for (const [id, first, child] of trace._dep) {
-				if (first) {
+				if (first && child) {
 					causedCreation = true;
 					res.push(`${prefix}CREATES -> ${id}`);
 					let nested = printChild(n + 1, child);

@@ -6,7 +6,7 @@
 import { IRequestOptions, IRequestContext, IRequestFunction } from 'vs/base/node/request';
 import { Readable } from 'stream';
 import { RequestService as NodeRequestService } from 'vs/platform/request/node/requestService';
-import { CancellationToken } from 'vscode';
+import { CancellationToken } from 'vs/base/common/cancellation';
 import { canceled } from 'vs/base/common/errors';
 
 /**
@@ -24,7 +24,7 @@ export const xhrRequest: IRequestFunction = (options: IRequestOptions, token: Ca
 	const xhr = new XMLHttpRequest();
 	return new Promise<IRequestContext>((resolve, reject) => {
 
-		xhr.open(options.type || 'GET', options.url, true, options.user, options.password);
+		xhr.open(options.type || 'GET', options.url || '', true, options.user, options.password);
 		setRequestHeaders(xhr, options);
 
 		xhr.responseType = 'arraybuffer';

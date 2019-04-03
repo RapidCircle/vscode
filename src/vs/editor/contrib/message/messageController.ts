@@ -33,8 +33,8 @@ export class MessageController extends Disposable implements editorCommon.IEdito
 		return MessageController._id;
 	}
 
-	private _editor: ICodeEditor;
-	private _visible: IContextKey<boolean>;
+	private readonly _editor: ICodeEditor;
+	private readonly _visible: IContextKey<boolean>;
 	private _messageWidget: MessageWidget;
 	private _messageListeners: IDisposable[] = [];
 
@@ -100,7 +100,9 @@ export class MessageController extends Disposable implements editorCommon.IEdito
 	}
 
 	private _onDidAttemptReadOnlyEdit(): void {
-		this.showMessage(nls.localize('editor.readonly', "Cannot edit in read-only editor"), this._editor.getPosition());
+		if (this._editor.hasModel()) {
+			this.showMessage(nls.localize('editor.readonly', "Cannot edit in read-only editor"), this._editor.getPosition());
+		}
 	}
 }
 
@@ -123,9 +125,9 @@ class MessageWidget implements IContentWidget {
 	readonly allowEditorOverflow = true;
 	readonly suppressMouseDown = false;
 
-	private _editor: ICodeEditor;
-	private _position: IPosition;
-	private _domNode: HTMLDivElement;
+	private readonly _editor: ICodeEditor;
+	private readonly _position: IPosition;
+	private readonly _domNode: HTMLDivElement;
 
 	static fadeOut(messageWidget: MessageWidget): IDisposable {
 		let handle: any;

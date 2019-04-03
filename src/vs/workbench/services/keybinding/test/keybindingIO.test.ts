@@ -3,20 +3,20 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 import * as assert from 'assert';
-import { KeyCode, KeyMod, KeyChord, createKeybinding, SimpleKeybinding } from 'vs/base/common/keyCodes';
-import { KeybindingIO } from 'vs/workbench/services/keybinding/common/keybindingIO';
-import { OS, OperatingSystem } from 'vs/base/common/platform';
+import { KeyChord, KeyCode, KeyMod, SimpleKeybinding, createKeybinding } from 'vs/base/common/keyCodes';
+import { KeybindingParser } from 'vs/base/common/keybindingParser';
+import { OperatingSystem } from 'vs/base/common/platform';
+import { ScanCode, ScanCodeBinding } from 'vs/base/common/scanCode';
 import { IUserFriendlyKeybinding } from 'vs/platform/keybinding/common/keybinding';
 import { USLayoutResolvedKeybinding } from 'vs/platform/keybinding/common/usLayoutResolvedKeybinding';
-import { ScanCodeBinding, ScanCode } from 'vs/base/common/scanCode';
-import { KeybindingParser } from 'vs/base/common/keybindingParser';
+import { KeybindingIO } from 'vs/workbench/services/keybinding/common/keybindingIO';
 
 suite('keybindingIO', () => {
 
 	test('serialize/deserialize', () => {
 
 		function testOneSerialization(keybinding: number, expected: string, msg: string, OS: OperatingSystem): void {
-			let usLayoutResolvedKeybinding = new USLayoutResolvedKeybinding(createKeybinding(keybinding, OS), OS);
+			let usLayoutResolvedKeybinding = new USLayoutResolvedKeybinding(createKeybinding(keybinding, OS)!, OS);
 			let actualSerialized = usLayoutResolvedKeybinding.getUserSettingsLabel();
 			assert.equal(actualSerialized, expected, expected + ' - ' + msg);
 		}
@@ -126,37 +126,35 @@ suite('keybindingIO', () => {
 	test('issue #10452 - invalid command', () => {
 		let strJSON = `[{ "key": "ctrl+k ctrl+f", "command": ["firstcommand", "seccondcommand"] }]`;
 		let userKeybinding = <IUserFriendlyKeybinding>JSON.parse(strJSON)[0];
-		let keybindingItem = KeybindingIO.readUserKeybindingItem(userKeybinding, OS);
+		let keybindingItem = KeybindingIO.readUserKeybindingItem(userKeybinding);
 		assert.equal(keybindingItem.command, null);
 	});
 
 	test('issue #10452 - invalid when', () => {
 		let strJSON = `[{ "key": "ctrl+k ctrl+f", "command": "firstcommand", "when": [] }]`;
 		let userKeybinding = <IUserFriendlyKeybinding>JSON.parse(strJSON)[0];
-		let keybindingItem = KeybindingIO.readUserKeybindingItem(userKeybinding, OS);
+		let keybindingItem = KeybindingIO.readUserKeybindingItem(userKeybinding);
 		assert.equal(keybindingItem.when, null);
 	});
 
 	test('issue #10452 - invalid key', () => {
 		let strJSON = `[{ "key": [], "command": "firstcommand" }]`;
 		let userKeybinding = <IUserFriendlyKeybinding>JSON.parse(strJSON)[0];
-		let keybindingItem = KeybindingIO.readUserKeybindingItem(userKeybinding, OS);
-		assert.equal(keybindingItem.firstPart, null);
-		assert.equal(keybindingItem.chordPart, null);
+		let keybindingItem = KeybindingIO.readUserKeybindingItem(userKeybinding);
+		assert.deepEqual(keybindingItem.parts, []);
 	});
 
 	test('issue #10452 - invalid key 2', () => {
 		let strJSON = `[{ "key": "", "command": "firstcommand" }]`;
 		let userKeybinding = <IUserFriendlyKeybinding>JSON.parse(strJSON)[0];
-		let keybindingItem = KeybindingIO.readUserKeybindingItem(userKeybinding, OS);
-		assert.equal(keybindingItem.firstPart, null);
-		assert.equal(keybindingItem.chordPart, null);
+		let keybindingItem = KeybindingIO.readUserKeybindingItem(userKeybinding);
+		assert.deepEqual(keybindingItem.parts, []);
 	});
 
 	test('test commands args', () => {
 		let strJSON = `[{ "key": "ctrl+k ctrl+f", "command": "firstcommand", "when": [], "args": { "text": "theText" } }]`;
 		let userKeybinding = <IUserFriendlyKeybinding>JSON.parse(strJSON)[0];
-		let keybindingItem = KeybindingIO.readUserKeybindingItem(userKeybinding, OS);
+		let keybindingItem = KeybindingIO.readUserKeybindingItem(userKeybinding);
 		assert.equal(keybindingItem.commandArgs.text, 'theText');
 	});
 });

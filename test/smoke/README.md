@@ -1,23 +1,30 @@
 # VS Code Smoke Test
 
+Make sure you are on **Node v10.x**.
+
 ### Run
 
-```
+```bash
+# Compile
+cd test/smoke
+yarn compile
+cd ../..
+
 # Dev
 yarn smoketest
 
 # Build
-yarn smoketest --build PATH_TO_BUILD
+yarn smoketest --build PATH_TO_BUILD --stable-build PATH_TO_STABLE_BUILD
 ```
 
 ### Run for a release
 
 You must always run the smoketest version which matches the release you are testing. So, if you want to run the smoketest for a release build (eg `release/1.22`), you need that version of the smoke tests too:
 
-```
+```bash
 git checkout release/1.22
 yarn
-yarn smoketest --build PATH_TO_RELEASE_BUILD
+yarn smoketest --build PATH_TO_RELEASE_BUILD --stable-build PATH_TO_STABLE_BUILD
 ```
 
 ### Debug
@@ -30,7 +37,7 @@ yarn smoketest --build PATH_TO_RELEASE_BUILD
 
 Start a watch task in `test/smoke`:
 
-```
+```bash
 cd test/smoke
 yarn watch
 ```

@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Keybinding, SimpleKeybinding, ChordKeybinding, KeyCodeUtils } from 'vs/base/common/keyCodes';
+import { ChordKeybinding, KeyCodeUtils, Keybinding, SimpleKeybinding } from 'vs/base/common/keyCodes';
 import { OperatingSystem } from 'vs/base/common/platform';
 import { ScanCodeBinding, ScanCodeUtils } from 'vs/base/common/scanCode';
 
@@ -85,16 +85,14 @@ export class KeybindingParser {
 			return null;
 		}
 
-		let [firstPart, remains] = this.parseSimpleKeybinding(input);
-		let chordPart: SimpleKeybinding | null = null;
-		if (remains.length > 0) {
-			[chordPart] = this.parseSimpleKeybinding(remains);
-		}
+		const parts: SimpleKeybinding[] = [];
+		let part: SimpleKeybinding;
 
-		if (chordPart) {
-			return new ChordKeybinding(firstPart, chordPart);
-		}
-		return firstPart;
+		do {
+			[part, input] = this.parseSimpleKeybinding(input);
+			parts.push(part);
+		} while (input.length > 0);
+		return new ChordKeybinding(parts);
 	}
 
 	private static parseSimpleUserBinding(input: string): [SimpleKeybinding | ScanCodeBinding, string] {
@@ -109,16 +107,18 @@ export class KeybindingParser {
 		return [new SimpleKeybinding(mods.ctrl, mods.shift, mods.alt, mods.meta, keyCode), mods.remains];
 	}
 
-	static parseUserBinding(input: string): [SimpleKeybinding | ScanCodeBinding | null, SimpleKeybinding | ScanCodeBinding | null] {
+	static parseUserBinding(input: string): (SimpleKeybinding | ScanCodeBinding)[] {
 		if (!input) {
-			return [null, null];
+			return [];
 		}
 
-		let [firstPart, remains] = this.parseSimpleUserBinding(input);
-		let chordPart: SimpleKeybinding | ScanCodeBinding | null = null;
-		if (remains.length > 0) {
-			[chordPart] = this.parseSimpleUserBinding(remains);
+		const parts: (SimpleKeybinding | ScanCodeBinding)[] = [];
+		let part: SimpleKeybinding | ScanCodeBinding;
+
+		while (input.length > 0) {
+			[part, input] = this.parseSimpleUserBinding(input);
+			parts.push(part);
 		}
-		return [firstPart, chordPart];
+		return parts;
 	}
 }

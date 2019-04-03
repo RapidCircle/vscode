@@ -6,10 +6,12 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import * as nls from 'vscode-nls';
+import { xhr, XHRResponse, getErrorStatusDescription } from 'request-light';
+
 const localize = nls.loadMessageBundle();
 
-import { workspace, languages, ExtensionContext, extensions, Uri, LanguageConfiguration } from 'vscode';
-import { LanguageClient, LanguageClientOptions, RequestType, ServerOptions, TransportKind, NotificationType, DidChangeConfigurationNotification } from 'vscode-languageclient';
+import { workspace, window, languages, commands, ExtensionContext, extensions, Uri, LanguageConfiguration, Diagnostic, StatusBarAlignment, TextEditor, TextDocument, Position, SelectionRange } from 'vscode';
+import { LanguageClient, LanguageClientOptions, RequestType, ServerOptions, TransportKind, NotificationType, DidChangeConfigurationNotification, HandleDiagnosticsSignature } from 'vscode-languageclient';
 import TelemetryReporter from 'vscode-extension-telemetry';
 
 import { hash } from './utils/hash';
@@ -20,6 +22,10 @@ namespace VSCodeContentRequest {
 
 namespace SchemaContentChangeNotification {
 	export const type: NotificationType<string, any> = new NotificationType('json/schemaContent');
+}
+
+namespace ForceValidateRequest {
+	export const type: RequestType<string, Diagnostic[], any, any> = new RequestType('json/validate');
 }
 
 export interface ISchemaAssociations {
@@ -77,10 +83,21 @@ export function activate(context: ExtensionContext) {
 
 	let documentSelector = ['json', 'jsonc'];
 
+	let schemaResolutionErrorStatusBarItem = window.createStatusBarItem(StatusBarAlignment.Right, 0);
+	schemaResolutionErrorStatusBarItem.command = '_json.retryResolveSchema';
+	schemaResolutionErrorStatusBarItem.tooltip = localize('json.schemaResolutionErrorMessage', 'Unable to resolve schema.') + ' ' + localize('json.clickToRetry', 'Click to retry.');
+	schemaResolutionErrorStatusBarItem.text = '$(alert)';
+	toDispose.push(schemaResolutionErrorStatusBarItem);
+
+	let fileSchemaErrors = new Map<string, string>();
+
 	// Options to control the language client
 	let clientOptions: LanguageClientOptions = {
 		// Register the server for json documents
 		documentSelector,
+		initializationOptions: {
+			handledSchemaProtocols: ['file'] // language server only loads file-URI. Fetching schemas with other protocols ('http'...) are made on the client.
+		},
 		synchronize: {
 			// Synchronize the setting section 'json' to the server
 			configurationSection: ['json', 'http'],
@@ -89,6 +106,23 @@ export function activate(context: ExtensionContext) {
 		middleware: {
 			workspace: {
 				didChangeConfiguration: () => client.sendNotification(DidChangeConfigurationNotification.type, { settings: getSettings() })
+			},
+			handleDiagnostics: (uri: Uri, diagnostics: Diagnostic[], next: HandleDiagnosticsSignature) => {
+				const schemaErrorIndex = diagnostics.findIndex(candidate => candidate.code === /* SchemaResolveError */ 0x300);
+
+				if (schemaErrorIndex === -1) {
+					fileSchemaErrors.delete(uri.toString());
+					return next(uri, diagnostics);
+				}
+
+				const schemaResolveDiagnostic = diagnostics[schemaErrorIndex];
+				fileSchemaErrors.set(uri.toString(), schemaResolveDiagnostic.message);
+
+				if (window.activeTextEditor && window.activeTextEditor.document.uri.toString() === uri.toString()) {
+					schemaResolutionErrorStatusBarItem.show();
+				}
+
+				next(uri, diagnostics);
 			}
 		}
 	};
@@ -109,11 +143,20 @@ export function activate(context: ExtensionContext) {
 		// handle content request
 		client.onRequest(VSCodeContentRequest.type, (uriPath: string) => {
 			let uri = Uri.parse(uriPath);
-			return workspace.openTextDocument(uri).then(doc => {
-				return doc.getText();
-			}, error => {
-				return Promise.reject(error);
-			});
+			if (uri.scheme !== 'http' && uri.scheme !== 'https') {
+				return workspace.openTextDocument(uri).then(doc => {
+					return doc.getText();
+				}, error => {
+					return Promise.reject(error);
+				});
+			} else {
+				const headers = { 'Accept-Encoding': 'gzip, deflate' };
+				return xhr({ url: uriPath, followRedirects: 5, headers }).then(response => {
+					return response.responseText;
+				}, (error: XHRResponse) => {
+					return Promise.reject(error.responseText || getErrorStatusDescription(error.status) || error.toString());
+				});
+			}
 		});
 
 		let handleContentChange = (uri: Uri) => {
@@ -121,11 +164,76 @@ export function activate(context: ExtensionContext) {
 				client.sendNotification(SchemaContentChangeNotification.type, uri.toString());
 			}
 		};
+
+		let handleActiveEditorChange = (activeEditor?: TextEditor) => {
+			if (!activeEditor) {
+				return;
+			}
+
+			const activeDocUri = activeEditor.document.uri.toString();
+
+			if (activeDocUri && fileSchemaErrors.has(activeDocUri)) {
+				schemaResolutionErrorStatusBarItem.show();
+			} else {
+				schemaResolutionErrorStatusBarItem.hide();
+			}
+		};
+
 		toDispose.push(workspace.onDidChangeTextDocument(e => handleContentChange(e.document.uri)));
-		toDispose.push(workspace.onDidCloseTextDocument(d => handleContentChange(d.uri)));
+		toDispose.push(workspace.onDidCloseTextDocument(d => {
+			handleContentChange(d.uri);
+			fileSchemaErrors.delete(d.uri.toString());
+		}));
+		toDispose.push(window.onDidChangeActiveTextEditor(handleActiveEditorChange));
+
+		let handleRetryResolveSchemaCommand = () => {
+			if (window.activeTextEditor) {
+				schemaResolutionErrorStatusBarItem.text = '$(watch)';
+				const activeDocUri = window.activeTextEditor.document.uri.toString();
+				client.sendRequest(ForceValidateRequest.type, activeDocUri).then((diagnostics) => {
+					const schemaErrorIndex = diagnostics.findIndex(candidate => candidate.code === /* SchemaResolveError */ 0x300);
+					if (schemaErrorIndex !== -1) {
+						// Show schema resolution errors in status bar only; ref: #51032
+						const schemaResolveDiagnostic = diagnostics[schemaErrorIndex];
+						fileSchemaErrors.set(activeDocUri, schemaResolveDiagnostic.message);
+					} else {
+						schemaResolutionErrorStatusBarItem.hide();
+					}
+					schemaResolutionErrorStatusBarItem.text = '$(alert)';
+				});
+			}
+		};
+
+		toDispose.push(commands.registerCommand('_json.retryResolveSchema', handleRetryResolveSchemaCommand));
 
 		client.sendNotification(SchemaAssociationNotification.type, getSchemaAssociation(context));
+
+		extensions.onDidChange(_ => {
+			client.sendNotification(SchemaAssociationNotification.type, getSchemaAssociation(context));
+		});
+
+		documentSelector.forEach(selector => {
+			toDispose.push(languages.registerSelectionRangeProvider(selector, {
+				async provideSelectionRanges(document: TextDocument, positions: Position[]): Promise<SelectionRange[]> {
+					const textDocument = client.code2ProtocolConverter.asTextDocumentIdentifier(document);
+					const rawResult = await client.sendRequest<SelectionRange[][]>('$/textDocument/selectionRanges', { textDocument, positions: positions.map(client.code2ProtocolConverter.asPosition) });
+					if (Array.isArray(rawResult)) {
+						return rawResult.map(rawSelectionRanges => {
+							return rawSelectionRanges.reduceRight((parent: SelectionRange | undefined, selectionRange: SelectionRange) => {
+								return {
+									range: client.protocol2CodeConverter.asRange(selectionRange.range),
+									parent,
+								};
+							}, undefined)!;
+						});
+					}
+					return [];
+				}
+			}));
+		});
 	});
+
+
 
 	let languageConfiguration: LanguageConfiguration = {
 		wordPattern: /("(?:[^\\\"]*(?:\\.)?)*"?)|[^\s{}\[\],:]+/,
@@ -270,7 +378,7 @@ function getPackageInfo(context: ExtensionContext): IPackageInfo | undefined {
 			aiKey: extensionPackage.aiKey
 		};
 	}
-	return void 0;
+	return undefined;
 }
 
 function readJSONFile(location: string) {

@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { IEditorAction } from 'vs/editor/common/editorCommon';
-import { IContextKeyService, ContextKeyExpr } from 'vs/platform/contextkey/common/contextkey';
+import { ContextKeyExpr, IContextKeyService } from 'vs/platform/contextkey/common/contextkey';
 
 export class InternalEditorAction implements IEditorAction {
 
@@ -12,7 +12,7 @@ export class InternalEditorAction implements IEditorAction {
 	public readonly label: string;
 	public readonly alias: string;
 
-	private readonly _precondition: ContextKeyExpr;
+	private readonly _precondition: ContextKeyExpr | undefined;
 	private readonly _run: () => Promise<void>;
 	private readonly _contextKeyService: IContextKeyService;
 
@@ -20,7 +20,7 @@ export class InternalEditorAction implements IEditorAction {
 		id: string,
 		label: string,
 		alias: string,
-		precondition: ContextKeyExpr,
+		precondition: ContextKeyExpr | undefined,
 		run: () => Promise<void>,
 		contextKeyService: IContextKeyService
 	) {
@@ -38,10 +38,10 @@ export class InternalEditorAction implements IEditorAction {
 
 	public run(): Promise<void> {
 		if (!this.isSupported()) {
-			return Promise.resolve(void 0);
+			return Promise.resolve(undefined);
 		}
 
 		const r = this._run();
-		return r ? r : Promise.resolve(void 0);
+		return r ? r : Promise.resolve(undefined);
 	}
 }

@@ -4,8 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as platform from 'vs/base/common/platform';
-import { EditorZoom } from 'vs/editor/common/config/editorZoom';
 import { EDITOR_FONT_DEFAULTS } from 'vs/editor/common/config/editorOptions';
+import { EditorZoom } from 'vs/editor/common/config/editorZoom';
 
 /**
  * Determined from empirical observations.
@@ -80,7 +80,7 @@ export class BareFontInfo {
 		fontSize?: number | string;
 		lineHeight?: number | string;
 		letterSpacing?: number | string;
-	}, zoomLevel: number): BareFontInfo {
+	}, zoomLevel: number, ignoreEditorZoom: boolean = false): BareFontInfo {
 
 		let fontFamily = _string(opts.fontFamily, EDITOR_FONT_DEFAULTS.fontFamily);
 		let fontWeight = _string(opts.fontWeight, EDITOR_FONT_DEFAULTS.fontWeight);
@@ -105,7 +105,7 @@ export class BareFontInfo {
 		let letterSpacing = safeParseFloat(opts.letterSpacing, 0);
 		letterSpacing = clamp(letterSpacing, MINIMUM_LETTER_SPACING, MAXIMUM_LETTER_SPACING);
 
-		let editorZoomLevelMultiplier = 1 + (EditorZoom.getZoomLevel() * 0.1);
+		let editorZoomLevelMultiplier = 1 + (ignoreEditorZoom ? 0 : EditorZoom.getZoomLevel() * 0.1);
 		fontSize *= editorZoomLevelMultiplier;
 		lineHeight *= editorZoomLevelMultiplier;
 
@@ -150,6 +150,22 @@ export class BareFontInfo {
 	 */
 	public getId(): string {
 		return this.zoomLevel + '-' + this.fontFamily + '-' + this.fontWeight + '-' + this.fontSize + '-' + this.lineHeight + '-' + this.letterSpacing;
+	}
+
+	/**
+	 * @internal
+	 */
+	public getMassagedFontFamily(): string {
+		if (/[,"']/.test(this.fontFamily)) {
+			// Looks like the font family might be already escaped
+			return this.fontFamily;
+		}
+		if (/[+ ]/.test(this.fontFamily)) {
+			// Wrap a font family using + or <space> with quotes
+			return `"${this.fontFamily}"`;
+		}
+
+		return this.fontFamily;
 	}
 }
 

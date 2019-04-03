@@ -5,13 +5,13 @@
 
 import { CommonEditorConfiguration, IEnvConfiguration } from 'vs/editor/common/config/commonEditorConfig';
 import { IEditorOptions } from 'vs/editor/common/config/editorOptions';
-import { FontInfo, BareFontInfo } from 'vs/editor/common/config/fontInfo';
-import { AccessibilitySupport } from 'vs/base/common/platform';
+import { BareFontInfo, FontInfo } from 'vs/editor/common/config/fontInfo';
+import { AccessibilitySupport } from 'vs/platform/accessibility/common/accessibility';
 
 export class TestConfiguration extends CommonEditorConfiguration {
 
 	constructor(opts: IEditorOptions) {
-		super(opts);
+		super(false, opts);
 		this._recomputeOptions();
 	}
 

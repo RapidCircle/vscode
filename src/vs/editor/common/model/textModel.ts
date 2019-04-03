@@ -3,36 +3,36 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { URI } from 'vs/base/common/uri';
-import { Event, Emitter } from 'vs/base/common/event';
-import * as model from 'vs/editor/common/model';
-import { LanguageIdentifier, TokenizationRegistry, LanguageId, IState } from 'vs/editor/common/modes';
-import { EditStack } from 'vs/editor/common/model/editStack';
-import { Range, IRange } from 'vs/editor/common/core/range';
-import { Selection } from 'vs/editor/common/core/selection';
-import { ModelRawContentChangedEvent, IModelDecorationsChangedEvent, IModelLanguageChangedEvent, IModelLanguageConfigurationChangedEvent, IModelTokensChangedEvent, IModelOptionsChangedEvent, IModelContentChangedEvent, InternalModelContentChangeEvent, ModelRawFlush, ModelRawEOLChanged, ModelRawChange, ModelRawLineChanged, ModelRawLinesDeleted, ModelRawLinesInserted } from 'vs/editor/common/model/textModelEvents';
-import { onUnexpectedError } from 'vs/base/common/errors';
-import { IMarkdownString } from 'vs/base/common/htmlContent';
-import * as strings from 'vs/base/common/strings';
 import { CharCode } from 'vs/base/common/charCode';
-import { ThemeColor, ITheme } from 'vs/platform/theme/common/themeService';
-import { IntervalNode, IntervalTree, recomputeMaxEnd, getNodeIsInOverviewRuler } from 'vs/editor/common/model/intervalTree';
+import { onUnexpectedError } from 'vs/base/common/errors';
+import { Emitter, Event } from 'vs/base/common/event';
+import { IMarkdownString } from 'vs/base/common/htmlContent';
 import { Disposable, IDisposable } from 'vs/base/common/lifecycle';
 import { StopWatch } from 'vs/base/common/stopwatch';
+import * as strings from 'vs/base/common/strings';
+import { URI } from 'vs/base/common/uri';
+import { EDITOR_MODEL_DEFAULTS } from 'vs/editor/common/config/editorOptions';
+import { LineTokens } from 'vs/editor/common/core/lineTokens';
+import { IPosition, Position } from 'vs/editor/common/core/position';
+import { IRange, Range } from 'vs/editor/common/core/range';
+import { Selection } from 'vs/editor/common/core/selection';
+import * as model from 'vs/editor/common/model';
+import { EditStack } from 'vs/editor/common/model/editStack';
+import { guessIndentation } from 'vs/editor/common/model/indentationGuesser';
+import { IntervalNode, IntervalTree, getNodeIsInOverviewRuler, recomputeMaxEnd } from 'vs/editor/common/model/intervalTree';
+import { PieceTreeTextBufferBuilder } from 'vs/editor/common/model/pieceTreeTextBuffer/pieceTreeTextBufferBuilder';
+import { IModelContentChangedEvent, IModelDecorationsChangedEvent, IModelLanguageChangedEvent, IModelLanguageConfigurationChangedEvent, IModelOptionsChangedEvent, IModelTokensChangedEvent, InternalModelContentChangeEvent, ModelRawChange, ModelRawContentChangedEvent, ModelRawEOLChanged, ModelRawFlush, ModelRawLineChanged, ModelRawLinesDeleted, ModelRawLinesInserted } from 'vs/editor/common/model/textModelEvents';
+import { SearchData, SearchParams, TextModelSearch } from 'vs/editor/common/model/textModelSearch';
+import { ModelLinesTokens, ModelTokensChangedEventBuilder } from 'vs/editor/common/model/textModelTokens';
+import { getWordAtText } from 'vs/editor/common/model/wordHelper';
+import { IState, LanguageId, LanguageIdentifier, TokenizationRegistry, FormattingOptions } from 'vs/editor/common/modes';
+import { LanguageConfigurationRegistry } from 'vs/editor/common/modes/languageConfigurationRegistry';
 import { NULL_LANGUAGE_IDENTIFIER } from 'vs/editor/common/modes/nullMode';
 import { ignoreBracketsInToken } from 'vs/editor/common/modes/supports';
-import { BracketsUtils, RichEditBrackets, RichEditBracket } from 'vs/editor/common/modes/supports/richEditBrackets';
-import { Position, IPosition } from 'vs/editor/common/core/position';
-import { LanguageConfigurationRegistry } from 'vs/editor/common/modes/languageConfigurationRegistry';
-import { LineTokens } from 'vs/editor/common/core/lineTokens';
-import { getWordAtText } from 'vs/editor/common/model/wordHelper';
-import { ModelLinesTokens, ModelTokensChangedEventBuilder } from 'vs/editor/common/model/textModelTokens';
-import { guessIndentation } from 'vs/editor/common/model/indentationGuesser';
-import { EDITOR_MODEL_DEFAULTS } from 'vs/editor/common/config/editorOptions';
-import { TextModelSearch, SearchParams, SearchData } from 'vs/editor/common/model/textModelSearch';
-import { TPromise } from 'vs/base/common/winjs.base';
+import { BracketsUtils, RichEditBracket, RichEditBrackets } from 'vs/editor/common/modes/supports/richEditBrackets';
 import { IStringStream, ITextSnapshot } from 'vs/platform/files/common/files';
-import { PieceTreeTextBufferBuilder } from 'vs/editor/common/model/pieceTreeTextBuffer/pieceTreeTextBufferBuilder';
+import { ITheme, ThemeColor } from 'vs/platform/theme/common/themeService';
+import { withUndefinedAsNull } from 'vs/base/common/types';
 
 const CHEAP_TOKENIZATION_LENGTH_LIMIT = 2048;
 
@@ -46,8 +46,8 @@ export function createTextBufferFactory(text: string): model.ITextBufferFactory 
 	return builder.finish();
 }
 
-export function createTextBufferFactoryFromStream(stream: IStringStream, filter?: (chunk: string) => string): TPromise<model.ITextBufferFactory> {
-	return new TPromise<model.ITextBufferFactory>((c, e) => {
+export function createTextBufferFactoryFromStream(stream: IStringStream, filter?: (chunk: string) => string): Promise<model.ITextBufferFactory> {
+	return new Promise<model.ITextBufferFactory>((c, e) => {
 		let done = false;
 		let builder = createTextBufferBuilder();
 
@@ -153,23 +153,7 @@ class TextModelSnapshot implements ITextSnapshot {
 	}
 }
 
-const invalidChangeAccessor: model.IModelDecorationsChangeAccessor = {
-	addDecoration: (range: IRange, options: model.IModelDecorationOptions): string => {
-		throw new Error(`Invalid change accessor`);
-	},
-	changeDecoration: (id: string, newRange: IRange): void => {
-		throw new Error(`Invalid change accessor`);
-	},
-	changeDecorationOptions: (id: string, options: model.IModelDecorationOptions) => {
-		throw new Error(`Invalid change accessor`);
-	},
-	removeDecoration: (id: string): void => {
-		throw new Error(`Invalid change accessor`);
-	},
-	deltaDecorations: (oldDecorations: string[], newDecorations: model.IModelDeltaDecoration[]): string[] => {
-		throw new Error(`Invalid change accessor`);
-	}
-};
+const invalidFunc = () => { throw new Error(`Invalid change accessor`); };
 
 export class TextModel extends Disposable implements model.ITextModel {
 
@@ -180,6 +164,7 @@ export class TextModel extends Disposable implements model.ITextModel {
 	public static DEFAULT_CREATION_OPTIONS: model.ITextModelCreationOptions = {
 		isForSimpleWidget: false,
 		tabSize: EDITOR_MODEL_DEFAULTS.tabSize,
+		indentSize: EDITOR_MODEL_DEFAULTS.indentSize,
 		insertSpaces: EDITOR_MODEL_DEFAULTS.insertSpaces,
 		detectIndentation: false,
 		defaultEOL: model.DefaultEndOfLine.LF,
@@ -196,6 +181,7 @@ export class TextModel extends Disposable implements model.ITextModel {
 			const guessedIndentation = guessIndentation(textBuffer, options.tabSize, options.insertSpaces);
 			return new model.TextModelResolvedOptions({
 				tabSize: guessedIndentation.tabSize,
+				indentSize: guessedIndentation.tabSize, // TODO@Alex: guess indentSize independent of tabSize
 				insertSpaces: guessedIndentation.insertSpaces,
 				trimAutoWhitespace: options.trimAutoWhitespace,
 				defaultEOL: options.defaultEOL
@@ -204,6 +190,7 @@ export class TextModel extends Disposable implements model.ITextModel {
 
 		return new model.TextModelResolvedOptions({
 			tabSize: options.tabSize,
+			indentSize: options.indentSize,
 			insertSpaces: options.insertSpaces,
 			trimAutoWhitespace: options.trimAutoWhitespace,
 			defaultEOL: options.defaultEOL
@@ -279,8 +266,8 @@ export class TextModel extends Disposable implements model.ITextModel {
 
 	//#region Tokenization
 	private _languageIdentifier: LanguageIdentifier;
-	private _tokenizationListener: IDisposable;
-	private _languageRegistryListener: IDisposable;
+	private readonly _tokenizationListener: IDisposable;
+	private readonly _languageRegistryListener: IDisposable;
 	private _revalidateTokensTimeout: any;
 	/*private*/_tokens: ModelLinesTokens;
 	//#endregion
@@ -332,6 +319,7 @@ export class TextModel extends Disposable implements model.ITextModel {
 
 			this._resetTokenizationState();
 			this.emitModelTokensChangedEvent({
+				tokenizationSupportChanged: true,
 				ranges: [{
 					fromLineNumber: 1,
 					toLineNumber: this.getLineCount()
@@ -603,14 +591,23 @@ export class TextModel extends Disposable implements model.ITextModel {
 		return this._options;
 	}
 
+	public getFormattingOptions(): FormattingOptions {
+		return {
+			tabSize: this._options.indentSize,
+			insertSpaces: this._options.insertSpaces
+		};
+	}
+
 	public updateOptions(_newOpts: model.ITextModelUpdateOptions): void {
 		this._assertNotDisposed();
 		let tabSize = (typeof _newOpts.tabSize !== 'undefined') ? _newOpts.tabSize : this._options.tabSize;
+		let indentSize = (typeof _newOpts.indentSize !== 'undefined') ? _newOpts.indentSize : this._options.indentSize;
 		let insertSpaces = (typeof _newOpts.insertSpaces !== 'undefined') ? _newOpts.insertSpaces : this._options.insertSpaces;
 		let trimAutoWhitespace = (typeof _newOpts.trimAutoWhitespace !== 'undefined') ? _newOpts.trimAutoWhitespace : this._options.trimAutoWhitespace;
 
 		let newOpts = new model.TextModelResolvedOptions({
 			tabSize: tabSize,
+			indentSize: indentSize,
 			insertSpaces: insertSpaces,
 			defaultEOL: this._options.defaultEOL,
 			trimAutoWhitespace: trimAutoWhitespace
@@ -631,15 +628,16 @@ export class TextModel extends Disposable implements model.ITextModel {
 		let guessedIndentation = guessIndentation(this._buffer, defaultTabSize, defaultInsertSpaces);
 		this.updateOptions({
 			insertSpaces: guessedIndentation.insertSpaces,
-			tabSize: guessedIndentation.tabSize
+			tabSize: guessedIndentation.tabSize,
+			indentSize: guessedIndentation.tabSize, // TODO@Alex: guess indentSize independent of tabSize
 		});
 	}
 
-	private static _normalizeIndentationFromWhitespace(str: string, tabSize: number, insertSpaces: boolean): string {
+	private static _normalizeIndentationFromWhitespace(str: string, indentSize: number, insertSpaces: boolean): string {
 		let spacesCnt = 0;
 		for (let i = 0; i < str.length; i++) {
 			if (str.charAt(i) === '\t') {
-				spacesCnt += tabSize;
+				spacesCnt += indentSize;
 			} else {
 				spacesCnt++;
 			}
@@ -647,8 +645,8 @@ export class TextModel extends Disposable implements model.ITextModel {
 
 		let result = '';
 		if (!insertSpaces) {
-			let tabsCnt = Math.floor(spacesCnt / tabSize);
-			spacesCnt = spacesCnt % tabSize;
+			let tabsCnt = Math.floor(spacesCnt / indentSize);
+			spacesCnt = spacesCnt % indentSize;
 			for (let i = 0; i < tabsCnt; i++) {
 				result += '\t';
 			}
@@ -661,33 +659,17 @@ export class TextModel extends Disposable implements model.ITextModel {
 		return result;
 	}
 
-	public static normalizeIndentation(str: string, tabSize: number, insertSpaces: boolean): string {
+	public static normalizeIndentation(str: string, indentSize: number, insertSpaces: boolean): string {
 		let firstNonWhitespaceIndex = strings.firstNonWhitespaceIndex(str);
 		if (firstNonWhitespaceIndex === -1) {
 			firstNonWhitespaceIndex = str.length;
 		}
-		return TextModel._normalizeIndentationFromWhitespace(str.substring(0, firstNonWhitespaceIndex), tabSize, insertSpaces) + str.substring(firstNonWhitespaceIndex);
+		return TextModel._normalizeIndentationFromWhitespace(str.substring(0, firstNonWhitespaceIndex), indentSize, insertSpaces) + str.substring(firstNonWhitespaceIndex);
 	}
 
 	public normalizeIndentation(str: string): string {
 		this._assertNotDisposed();
-		return TextModel.normalizeIndentation(str, this._options.tabSize, this._options.insertSpaces);
-	}
-
-	public getOneIndent(): string {
-		this._assertNotDisposed();
-		let tabSize = this._options.tabSize;
-		let insertSpaces = this._options.insertSpaces;
-
-		if (insertSpaces) {
-			let result = '';
-			for (let i = 0; i < tabSize; i++) {
-				result += ' ';
-			}
-			return result;
-		} else {
-			return '\t';
-		}
+		return TextModel.normalizeIndentation(str, this._options.indentSize, this._options.insertSpaces);
 	}
 
 	//#endregion
@@ -1183,7 +1165,7 @@ export class TextModel extends Disposable implements model.ITextModel {
 		}
 	}
 
-	public pushEditOperations(beforeCursorState: Selection[], editOperations: model.IIdentifiedSingleEditOperation[], cursorStateComputer: model.ICursorStateComputer): Selection[] | null {
+	public pushEditOperations(beforeCursorState: Selection[], editOperations: model.IIdentifiedSingleEditOperation[], cursorStateComputer: model.ICursorStateComputer | null): Selection[] | null {
 		try {
 			this._onDidChangeDecorations.beginDeferredEmit();
 			this._eventEmitter.beginDeferredEmit();
@@ -1194,7 +1176,7 @@ export class TextModel extends Disposable implements model.ITextModel {
 		}
 	}
 
-	private _pushEditOperations(beforeCursorState: Selection[], editOperations: model.IIdentifiedSingleEditOperation[], cursorStateComputer: model.ICursorStateComputer): Selection[] | null {
+	private _pushEditOperations(beforeCursorState: Selection[], editOperations: model.IIdentifiedSingleEditOperation[], cursorStateComputer: model.ICursorStateComputer | null): Selection[] | null {
 		if (this._options.trimAutoWhitespace && this._trimAutoWhitespaceLines) {
 			// Go through each saved line number and insert a trim whitespace edit
 			// if it is safe to do so (no conflicts with other edits).
@@ -1521,11 +1503,11 @@ export class TextModel extends Disposable implements model.ITextModel {
 			onUnexpectedError(e);
 		}
 		// Invalidate change accessor
-		changeAccessor.addDecoration = invalidChangeAccessor.addDecoration;
-		changeAccessor.changeDecoration = invalidChangeAccessor.changeDecoration;
-		changeAccessor.changeDecorationOptions = invalidChangeAccessor.changeDecorationOptions;
-		changeAccessor.removeDecoration = invalidChangeAccessor.removeDecoration;
-		changeAccessor.deltaDecorations = invalidChangeAccessor.deltaDecorations;
+		changeAccessor.addDecoration = invalidFunc;
+		changeAccessor.changeDecoration = invalidFunc;
+		changeAccessor.changeDecorationOptions = invalidFunc;
+		changeAccessor.removeDecoration = invalidFunc;
+		changeAccessor.deltaDecorations = invalidFunc;
 		return result;
 	}
 
@@ -1552,7 +1534,9 @@ export class TextModel extends Disposable implements model.ITextModel {
 		return this.getDecorationRange(id);
 	}
 
-	_setTrackedRange(id: string, newRange: Range, newStickiness: model.TrackedRangeStickiness): string | null {
+	_setTrackedRange(id: string | null, newRange: null, newStickiness: model.TrackedRangeStickiness): null;
+	_setTrackedRange(id: string | null, newRange: Range, newStickiness: model.TrackedRangeStickiness): string;
+	_setTrackedRange(id: string | null, newRange: Range | null, newStickiness: model.TrackedRangeStickiness): string | null {
 		const node = (id ? this._decorations[id] : null);
 
 		if (!node) {
@@ -1775,42 +1759,41 @@ export class TextModel extends Disposable implements model.ITextModel {
 
 	public tokenizeViewport(startLineNumber: number, endLineNumber: number): void {
 		if (!this._tokens.tokenizationSupport) {
+			// nothing to do
 			return;
 		}
 
-		// we tokenize `this._tokens.inValidLineStartIndex` lines in around 20ms so it's a good baseline.
-		const contextBefore = Math.floor(this._tokens.inValidLineStartIndex * 0.3);
-		startLineNumber = Math.max(1, startLineNumber - contextBefore);
+		startLineNumber = Math.max(1, startLineNumber);
+		endLineNumber = Math.min(this.getLineCount(), endLineNumber);
+
+		if (endLineNumber <= this._tokens.inValidLineStartIndex) {
+			// nothing to do
+			return;
+		}
 
 		if (startLineNumber <= this._tokens.inValidLineStartIndex) {
+			// tokenization has reached the viewport start...
 			this.forceTokenization(endLineNumber);
 			return;
 		}
 
-		const eventBuilder = new ModelTokensChangedEventBuilder();
 		let nonWhitespaceColumn = this.getLineFirstNonWhitespaceColumn(startLineNumber);
 		let fakeLines: string[] = [];
-		let i = startLineNumber - 1;
 		let initialState: IState | null = null;
-		if (nonWhitespaceColumn > 0) {
-			while (nonWhitespaceColumn > 0 && i >= 1) {
-				let newNonWhitespaceIndex = this.getLineFirstNonWhitespaceColumn(i);
+		for (let i = startLineNumber - 1; nonWhitespaceColumn > 0 && i >= 1; i--) {
+			let newNonWhitespaceIndex = this.getLineFirstNonWhitespaceColumn(i);
 
-				if (newNonWhitespaceIndex === 0) {
-					i--;
-					continue;
+			if (newNonWhitespaceIndex === 0) {
+				continue;
+			}
+
+			if (newNonWhitespaceIndex < nonWhitespaceColumn) {
+				initialState = this._tokens._getState(i - 1);
+				if (initialState) {
+					break;
 				}
-
-				if (newNonWhitespaceIndex < nonWhitespaceColumn) {
-					initialState = this._tokens._getState(i - 1);
-					if (initialState) {
-						break;
-					}
-					fakeLines.push(this.getLineContent(i));
-					nonWhitespaceColumn = newNonWhitespaceIndex;
-				}
-
-				i--;
+				fakeLines.push(this.getLineContent(i));
+				nonWhitespaceColumn = newNonWhitespaceIndex;
 			}
 		}
 
@@ -1828,19 +1811,16 @@ export class TextModel extends Disposable implements model.ITextModel {
 			}
 		}
 
-		const contextAfter = Math.floor(this._tokens.inValidLineStartIndex * 0.4);
-		endLineNumber = Math.min(this.getLineCount(), endLineNumber + contextAfter);
+		const eventBuilder = new ModelTokensChangedEventBuilder();
 		for (let i = startLineNumber; i <= endLineNumber; i++) {
 			let text = this.getLineContent(i);
 			let r = this._tokens._tokenizeText(this._buffer, text, state);
 			if (r) {
 				this._tokens._setTokens(this._tokens.languageIdentifier.id, i - 1, text.length, r.tokens);
-				/*
-				 * we think it's valid and give it a state but we don't update `_invalidLineStartIndex` then the top-to-bottom tokenization
-				 * goes through the viewport, it can skip them if they already have correct tokens and state, and the lines after the viewport
-				 * can still be tokenized.
-				 */
-				this._tokens._setIsInvalid(i - 1, false);
+
+				// We cannot trust these states/tokens to be valid!
+				// (see https://github.com/Microsoft/vscode/issues/67607)
+				this._tokens._setIsInvalid(i - 1, true);
 				this._tokens._setState(i - 1, state);
 				state = r.endState.clone();
 				eventBuilder.registerChangedTokens(i);
@@ -1853,6 +1833,17 @@ export class TextModel extends Disposable implements model.ITextModel {
 		if (e) {
 			this._onDidChangeTokens.fire(e);
 		}
+	}
+
+	public flushTokens(): void {
+		this._resetTokenizationState();
+		this.emitModelTokensChangedEvent({
+			tokenizationSupportChanged: false,
+			ranges: [{
+				fromLineNumber: 1,
+				toLineNumber: this.getLineCount()
+			}]
+		});
 	}
 
 	public forceTokenization(lineNumber: number): void {
@@ -1930,6 +1921,7 @@ export class TextModel extends Disposable implements model.ITextModel {
 		this._resetTokenizationState();
 
 		this.emitModelTokensChangedEvent({
+			tokenizationSupportChanged: true,
 			ranges: [{
 				fromLineNumber: 1,
 				toLineNumber: this.getLineCount()
@@ -2019,7 +2011,8 @@ export class TextModel extends Disposable implements model.ITextModel {
 			lineContent.substring(rbStartOffset, rbEndOffset),
 			rbStartOffset
 		);
-		if (rightBiasedWord) {
+		// Make sure the result touches the original passed in position
+		if (rightBiasedWord && rightBiasedWord.startColumn <= _position.column && _position.column <= rightBiasedWord.endColumn) {
 			return rightBiasedWord;
 		}
 
@@ -2033,7 +2026,8 @@ export class TextModel extends Disposable implements model.ITextModel {
 				lineContent.substring(lbStartOffset, lbEndOffset),
 				lbStartOffset
 			);
-			if (leftBiasedWord) {
+			// Make sure the result touches the original passed in position
+			if (leftBiasedWord && leftBiasedWord.startColumn <= _position.column && _position.column <= leftBiasedWord.endColumn) {
 				return leftBiasedWord;
 			}
 		}
@@ -2578,7 +2572,7 @@ export class TextModel extends Disposable implements model.ITextModel {
 					// Use the line's indent
 					up_belowContentLineIndex = upLineNumber - 1;
 					up_belowContentLineIndent = currentIndent;
-					upLineIndentLevel = Math.ceil(currentIndent / this._options.tabSize);
+					upLineIndentLevel = Math.ceil(currentIndent / this._options.indentSize);
 				} else {
 					up_resolveIndents(upLineNumber);
 					upLineIndentLevel = this._getIndentLevelForWhitespaceLine(offSide, up_aboveContentLineIndent, up_belowContentLineIndent);
@@ -2613,7 +2607,7 @@ export class TextModel extends Disposable implements model.ITextModel {
 					// Use the line's indent
 					down_aboveContentLineIndex = downLineNumber - 1;
 					down_aboveContentLineIndent = currentIndent;
-					downLineIndentLevel = Math.ceil(currentIndent / this._options.tabSize);
+					downLineIndentLevel = Math.ceil(currentIndent / this._options.indentSize);
 				} else {
 					down_resolveIndents(downLineNumber);
 					downLineIndentLevel = this._getIndentLevelForWhitespaceLine(offSide, down_aboveContentLineIndent, down_belowContentLineIndent);
@@ -2661,7 +2655,7 @@ export class TextModel extends Disposable implements model.ITextModel {
 				// Use the line's indent
 				aboveContentLineIndex = lineNumber - 1;
 				aboveContentLineIndent = currentIndent;
-				result[resultIndex] = Math.ceil(currentIndent / this._options.tabSize);
+				result[resultIndex] = Math.ceil(currentIndent / this._options.indentSize);
 				continue;
 			}
 
@@ -2708,20 +2702,20 @@ export class TextModel extends Disposable implements model.ITextModel {
 
 		} else if (aboveContentLineIndent < belowContentLineIndent) {
 			// we are inside the region above
-			return (1 + Math.floor(aboveContentLineIndent / this._options.tabSize));
+			return (1 + Math.floor(aboveContentLineIndent / this._options.indentSize));
 
 		} else if (aboveContentLineIndent === belowContentLineIndent) {
 			// we are in between two regions
-			return Math.ceil(belowContentLineIndent / this._options.tabSize);
+			return Math.ceil(belowContentLineIndent / this._options.indentSize);
 
 		} else {
 
 			if (offSide) {
 				// same level as region below
-				return Math.ceil(belowContentLineIndent / this._options.tabSize);
+				return Math.ceil(belowContentLineIndent / this._options.indentSize);
 			} else {
 				// we are inside the region that ends below
-				return (1 + Math.floor(belowContentLineIndent / this._options.tabSize));
+				return (1 + Math.floor(belowContentLineIndent / this._options.indentSize));
 			}
 
 		}
@@ -2737,12 +2731,12 @@ class DecorationsTrees {
 	/**
 	 * This tree holds decorations that do not show up in the overview ruler.
 	 */
-	private _decorationsTree0: IntervalTree;
+	private readonly _decorationsTree0: IntervalTree;
 
 	/**
 	 * This tree holds decorations that show up in the overview ruler.
 	 */
-	private _decorationsTree1: IntervalTree;
+	private readonly _decorationsTree1: IntervalTree;
 
 	constructor() {
 		this._decorationsTree0 = new IntervalTree();
@@ -2884,8 +2878,8 @@ export class ModelDecorationOptions implements model.IModelDecorationOptions {
 		this.stickiness = options.stickiness || model.TrackedRangeStickiness.AlwaysGrowsWhenTypingAtEdges;
 		this.zIndex = options.zIndex || 0;
 		this.className = options.className ? cleanClassName(options.className) : null;
-		this.hoverMessage = options.hoverMessage || null;
-		this.glyphMarginHoverMessage = options.glyphMarginHoverMessage || null;
+		this.hoverMessage = withUndefinedAsNull(options.hoverMessage);
+		this.glyphMarginHoverMessage = withUndefinedAsNull(options.glyphMarginHoverMessage);
 		this.isWholeLine = options.isWholeLine || false;
 		this.showIfCollapsed = options.showIfCollapsed || false;
 		this.collapseOnReplaceEdit = options.collapseOnReplaceEdit || false;

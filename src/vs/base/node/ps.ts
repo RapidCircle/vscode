@@ -22,7 +22,7 @@ export function listProcesses(rootPid: number): Promise<ProcessItem> {
 
 	return new Promise((resolve, reject) => {
 
-		let rootItem: ProcessItem;
+		let rootItem: ProcessItem | undefined;
 		const map = new Map<number, ProcessItem>();
 
 		function addToTree(pid: number, ppid: number, cmd: string, load: number, mem: number) {
@@ -109,7 +109,7 @@ export function listProcesses(rootPid: number): Promise<ProcessItem> {
 			} while (matches);
 
 			if (result) {
-				if (cmd.indexOf('node ') !== 0) {
+				if (cmd.indexOf('node ') < 0 && cmd.indexOf('node.exe') < 0) {
 					return `electron_node ${result}`;
 				}
 			}
@@ -137,21 +137,21 @@ export function listProcesses(rootPid: number): Promise<ProcessItem> {
 					windowsProcessTree.getProcessCpuUsage(processList, (completeProcessList) => {
 						const processItems: Map<number, ProcessItem> = new Map();
 						completeProcessList.forEach(process => {
-							const commandLine = cleanUNCPrefix(process.commandLine);
+							const commandLine = cleanUNCPrefix(process.commandLine || '');
 							processItems.set(process.pid, {
 								name: findName(commandLine),
 								cmd: commandLine,
 								pid: process.pid,
 								ppid: process.ppid,
-								load: process.cpu,
-								mem: process.memory
+								load: process.cpu || 0,
+								mem: process.memory || 0
 							});
 						});
 
 						rootItem = processItems.get(rootPid);
 						if (rootItem) {
 							processItems.forEach(item => {
-								let parent = processItems.get(item.ppid);
+								const parent = processItems.get(item.ppid);
 								if (parent) {
 									if (!parent.children) {
 										parent.children = [];
@@ -177,7 +177,8 @@ export function listProcesses(rootPid: number): Promise<ProcessItem> {
 			const CMD = '/bin/ps -ax -o pid=,ppid=,pcpu=,pmem=,command=';
 			const PID_CMD = /^\s*([0-9]+)\s+([0-9]+)\s+([0-9]+\.[0-9]+)\s+([0-9]+\.[0-9]+)\s+(.+)$/;
 
-			exec(CMD, { maxBuffer: 1000 * 1024 }, (err, stdout, stderr) => {
+			// Set numeric locale to ensure '.' is used as the decimal separator
+			exec(CMD, { maxBuffer: 1000 * 1024, env: { LC_NUMERIC: 'en_US.UTF-8' } }, (err, stdout, stderr) => {
 
 				if (err || stderr) {
 					reject(err || stderr.toString());
@@ -185,7 +186,7 @@ export function listProcesses(rootPid: number): Promise<ProcessItem> {
 
 					const lines = stdout.toString().split('\n');
 					for (const line of lines) {
-						let matches = PID_CMD.exec(line.trim());
+						const matches = PID_CMD.exec(line.trim());
 						if (matches && matches.length === 6) {
 							addToTree(parseInt(matches[1]), parseInt(matches[2]), matches[5], parseFloat(matches[3]), parseFloat(matches[4]));
 						}
@@ -194,12 +195,14 @@ export function listProcesses(rootPid: number): Promise<ProcessItem> {
 					if (process.platform === 'linux') {
 						// Flatten rootItem to get a list of all VSCode processes
 						let processes = [rootItem];
-						const pids = [];
+						const pids: number[] = [];
 						while (processes.length) {
 							const process = processes.shift();
-							pids.push(process.pid);
-							if (process.children) {
-								processes = processes.concat(process.children);
+							if (process) {
+								pids.push(process.pid);
+								if (process.children) {
+									processes = processes.concat(process.children);
+								}
 							}
 						}
 
@@ -215,7 +218,7 @@ export function listProcesses(rootPid: number): Promise<ProcessItem> {
 							} else {
 								const cpuUsage = stdout.toString().split('\n');
 								for (let i = 0; i < pids.length; i++) {
-									const processInfo = map.get(pids[i]);
+									const processInfo = map.get(pids[i])!;
 									processInfo.load = parseFloat(cpuUsage[i]);
 								}
 

@@ -4,11 +4,11 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as assert from 'assert';
-import { MainThreadMessageService } from 'vs/workbench/api/electron-browser/mainThreadMessageService';
-import { TPromise } from 'vs/base/common/winjs.base';
+import { MainThreadMessageService } from 'vs/workbench/api/browser/mainThreadMessageService';
 import { IDialogService } from 'vs/platform/dialogs/common/dialogs';
 import { INotificationService, INotification, NoOpNotification, INotificationHandle, Severity, IPromptChoice, IPromptOptions } from 'vs/platform/notification/common/notification';
 import { ICommandService } from 'vs/platform/commands/common/commands';
+import { mock } from 'vs/workbench/test/electron-browser/api/mock';
 
 const emptyDialogService = new class implements IDialogService {
 	_serviceBrand: 'dialogService';
@@ -25,7 +25,7 @@ const emptyCommandService: ICommandService = {
 	_serviceBrand: undefined,
 	onWillExecuteCommand: () => ({ dispose: () => { } }),
 	executeCommand: (commandId: string, ...args: any[]): Promise<any> => {
-		return Promise.resolve(void 0);
+		return Promise.resolve(undefined);
 	}
 };
 
@@ -78,9 +78,9 @@ suite('ExtHostMessageService', function () {
 
 	test('propagte handle on select', async function () {
 
-		let service = new MainThreadMessageService(null, new EmptyNotificationService(notification => {
-			assert.equal(notification.actions.primary.length, 1);
-			setImmediate(() => notification.actions.primary[0].run());
+		let service = new MainThreadMessageService(null!, new EmptyNotificationService(notification => {
+			assert.equal(notification.actions!.primary!.length, 1);
+			setImmediate(() => notification.actions!.primary![0].run());
 		}), emptyCommandService, emptyDialogService);
 
 		const handle = await service.$showMessage(1, 'h', {}, [{ handle: 42, title: 'a thing', isCloseAffordance: true }]);
@@ -89,13 +89,13 @@ suite('ExtHostMessageService', function () {
 
 	suite('modal', () => {
 		test('calls dialog service', async () => {
-			const service = new MainThreadMessageService(null, emptyNotificationService, emptyCommandService, {
-				show(severity, message, buttons) {
+			const service = new MainThreadMessageService(null!, emptyNotificationService, emptyCommandService, new class extends mock<IDialogService>() {
+				show(severity: Severity, message: string, buttons: string[]) {
 					assert.equal(severity, 1);
 					assert.equal(message, 'h');
 					assert.equal(buttons.length, 2);
 					assert.equal(buttons[1], 'Cancel');
-					return TPromise.as(0);
+					return Promise.resolve(0);
 				}
 			} as IDialogService);
 
@@ -104,9 +104,9 @@ suite('ExtHostMessageService', function () {
 		});
 
 		test('returns undefined when cancelled', async () => {
-			const service = new MainThreadMessageService(null, emptyNotificationService, emptyCommandService, {
-				show(severity, message, buttons) {
-					return TPromise.as(1);
+			const service = new MainThreadMessageService(null!, emptyNotificationService, emptyCommandService, new class extends mock<IDialogService>() {
+				show() {
+					return Promise.resolve(1);
 				}
 			} as IDialogService);
 
@@ -115,10 +115,10 @@ suite('ExtHostMessageService', function () {
 		});
 
 		test('hides Cancel button when not needed', async () => {
-			const service = new MainThreadMessageService(null, emptyNotificationService, emptyCommandService, {
-				show(severity, message, buttons) {
+			const service = new MainThreadMessageService(null!, emptyNotificationService, emptyCommandService, new class extends mock<IDialogService>() {
+				show(severity: Severity, message: string, buttons: string[]) {
 					assert.equal(buttons.length, 1);
-					return TPromise.as(0);
+					return Promise.resolve(0);
 				}
 			} as IDialogService);
 

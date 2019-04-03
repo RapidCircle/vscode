@@ -32,12 +32,12 @@ export class DragAndDropController implements editorCommon.IEditorContribution {
 
 	private static readonly ID = 'editor.contrib.dragAndDrop';
 
-	private _editor: ICodeEditor;
+	private readonly _editor: ICodeEditor;
 	private _toUnhook: IDisposable[];
-	private _dragSelection: Selection;
+	private _dragSelection: Selection | null;
 	private _dndDecorationIds: string[];
 	private _mouseDown: boolean;
-	private _modiferPressed: boolean;
+	private _modifierPressed: boolean;
 	static TRIGGER_KEY_VALUE = isMacintosh ? KeyCode.Alt : KeyCode.Ctrl;
 
 	static get(editor: ICodeEditor): DragAndDropController {
@@ -56,7 +56,7 @@ export class DragAndDropController implements editorCommon.IEditorContribution {
 		this._toUnhook.push(this._editor.onDidBlurEditorWidget(() => this.onEditorBlur()));
 		this._dndDecorationIds = [];
 		this._mouseDown = false;
-		this._modiferPressed = false;
+		this._modifierPressed = false;
 		this._dragSelection = null;
 	}
 
@@ -64,7 +64,7 @@ export class DragAndDropController implements editorCommon.IEditorContribution {
 		this._removeDecoration();
 		this._dragSelection = null;
 		this._mouseDown = false;
-		this._modiferPressed = false;
+		this._modifierPressed = false;
 	}
 
 	private onEditorKeyDown(e: IKeyboardEvent): void {
@@ -73,7 +73,7 @@ export class DragAndDropController implements editorCommon.IEditorContribution {
 		}
 
 		if (hasTriggerModifier(e)) {
-			this._modiferPressed = true;
+			this._modifierPressed = true;
 		}
 
 		if (this._mouseDown && hasTriggerModifier(e)) {
@@ -89,7 +89,7 @@ export class DragAndDropController implements editorCommon.IEditorContribution {
 		}
 
 		if (hasTriggerModifier(e)) {
-			this._modiferPressed = false;
+			this._modifierPressed = false;
 		}
 
 		if (this._mouseDown && e.keyCode === DragAndDropController.TRIGGER_KEY_VALUE) {
@@ -115,7 +115,8 @@ export class DragAndDropController implements editorCommon.IEditorContribution {
 		let target = mouseEvent.target;
 
 		if (this._dragSelection === null) {
-			let possibleSelections = this._editor.getSelections().filter(selection => selection.containsPosition(target.position));
+			const selections = this._editor.getSelections() || [];
+			let possibleSelections = selections.filter(selection => target.position && selection.containsPosition(target.position));
 			if (possibleSelections.length === 1) {
 				this._dragSelection = possibleSelections[0];
 			} else {
@@ -133,10 +134,12 @@ export class DragAndDropController implements editorCommon.IEditorContribution {
 			});
 		}
 
-		if (this._dragSelection.containsPosition(target.position)) {
-			this._removeDecoration();
-		} else {
-			this.showAt(target.position);
+		if (target.position) {
+			if (this._dragSelection.containsPosition(target.position)) {
+				this._removeDecoration();
+			} else {
+				this.showAt(target.position);
+			}
 		}
 	}
 
@@ -148,10 +151,12 @@ export class DragAndDropController implements editorCommon.IEditorContribution {
 				let newSelections: Selection[] | null = null;
 				if (mouseEvent.event.shiftKey) {
 					let primarySelection = this._editor.getSelection();
-					let { selectionStartLineNumber, selectionStartColumn } = primarySelection;
-					newSelections = [new Selection(selectionStartLineNumber, selectionStartColumn, newCursorPosition.lineNumber, newCursorPosition.column)];
+					if (primarySelection) {
+						const { selectionStartLineNumber, selectionStartColumn } = primarySelection;
+						newSelections = [new Selection(selectionStartLineNumber, selectionStartColumn, newCursorPosition.lineNumber, newCursorPosition.column)];
+					}
 				} else {
-					newSelections = this._editor.getSelections().map(selection => {
+					newSelections = (this._editor.getSelections() || []).map(selection => {
 						if (selection.containsPosition(newCursorPosition)) {
 							return new Selection(newCursorPosition.lineNumber, newCursorPosition.column, newCursorPosition.lineNumber, newCursorPosition.column);
 						} else {
@@ -160,18 +165,18 @@ export class DragAndDropController implements editorCommon.IEditorContribution {
 					});
 				}
 				// Use `mouse` as the source instead of `api`.
-				(<CodeEditorWidget>this._editor).setSelections(newSelections, 'mouse');
+				(<CodeEditorWidget>this._editor).setSelections(newSelections || [], 'mouse');
 			} else if (!this._dragSelection.containsPosition(newCursorPosition) ||
 				(
 					(
 						hasTriggerModifier(mouseEvent.event) ||
-						this._modiferPressed
+						this._modifierPressed
 					) && (
 						this._dragSelection.getEndPosition().equals(newCursorPosition) || this._dragSelection.getStartPosition().equals(newCursorPosition)
 					) // we allow users to paste content beside the selection
 				)) {
 				this._editor.pushUndoStop();
-				this._editor.executeCommand(DragAndDropController.ID, new DragAndDropCommand(this._dragSelection, newCursorPosition, hasTriggerModifier(mouseEvent.event) || this._modiferPressed));
+				this._editor.executeCommand(DragAndDropController.ID, new DragAndDropCommand(this._dragSelection, newCursorPosition, hasTriggerModifier(mouseEvent.event) || this._modifierPressed));
 				this._editor.pushUndoStop();
 			}
 		}
@@ -222,7 +227,7 @@ export class DragAndDropController implements editorCommon.IEditorContribution {
 		this._removeDecoration();
 		this._dragSelection = null;
 		this._mouseDown = false;
-		this._modiferPressed = false;
+		this._modifierPressed = false;
 		this._toUnhook = dispose(this._toUnhook);
 	}
 }

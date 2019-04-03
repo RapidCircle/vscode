@@ -3,10 +3,10 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { TextModel } from 'vs/editor/common/model/textModel';
-import { DefaultEndOfLine, ITextModelCreationOptions } from 'vs/editor/common/model';
-import { LanguageIdentifier } from 'vs/editor/common/modes';
 import { URI } from 'vs/base/common/uri';
+import { DefaultEndOfLine, ITextModelCreationOptions } from 'vs/editor/common/model';
+import { TextModel } from 'vs/editor/common/model/textModel';
+import { LanguageIdentifier } from 'vs/editor/common/modes';
 
 export function withEditorModel(text: string[], callback: (model: TextModel) => void): void {
 	let model = TextModel.createFromString(text.join('\n'));
@@ -16,6 +16,7 @@ export function withEditorModel(text: string[], callback: (model: TextModel) => 
 
 export interface IRelaxedTextModelCreationOptions {
 	tabSize?: number;
+	indentSize?: number;
 	insertSpaces?: boolean;
 	detectIndentation?: boolean;
 	trimAutoWhitespace?: boolean;
@@ -27,6 +28,7 @@ export interface IRelaxedTextModelCreationOptions {
 export function createTextModel(text: string, _options: IRelaxedTextModelCreationOptions = TextModel.DEFAULT_CREATION_OPTIONS, languageIdentifier: LanguageIdentifier | null = null, uri: URI | null = null): TextModel {
 	const options: ITextModelCreationOptions = {
 		tabSize: (typeof _options.tabSize === 'undefined' ? TextModel.DEFAULT_CREATION_OPTIONS.tabSize : _options.tabSize),
+		indentSize: (typeof _options.indentSize === 'undefined' ? TextModel.DEFAULT_CREATION_OPTIONS.indentSize : _options.indentSize),
 		insertSpaces: (typeof _options.insertSpaces === 'undefined' ? TextModel.DEFAULT_CREATION_OPTIONS.insertSpaces : _options.insertSpaces),
 		detectIndentation: (typeof _options.detectIndentation === 'undefined' ? TextModel.DEFAULT_CREATION_OPTIONS.detectIndentation : _options.detectIndentation),
 		trimAutoWhitespace: (typeof _options.trimAutoWhitespace === 'undefined' ? TextModel.DEFAULT_CREATION_OPTIONS.trimAutoWhitespace : _options.trimAutoWhitespace),

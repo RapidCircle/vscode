@@ -5,14 +5,14 @@
 
 import 'vs/css!./currentLineMarginHighlight';
 import { DynamicViewOverlay } from 'vs/editor/browser/view/dynamicViewOverlay';
-import { ViewContext } from 'vs/editor/common/view/viewContext';
+import { editorLineHighlight, editorLineHighlightBorder } from 'vs/editor/common/view/editorColorRegistry';
 import { RenderingContext } from 'vs/editor/common/view/renderingContext';
+import { ViewContext } from 'vs/editor/common/view/viewContext';
 import * as viewEvents from 'vs/editor/common/view/viewEvents';
 import { registerThemingParticipant } from 'vs/platform/theme/common/themeService';
-import { editorLineHighlight, editorLineHighlightBorder } from 'vs/editor/common/view/editorColorRegistry';
 
 export class CurrentLineMarginHighlightOverlay extends DynamicViewOverlay {
-	private _context: ViewContext;
+	private readonly _context: ViewContext;
 	private _lineHeight: number;
 	private _renderLineHighlight: 'none' | 'gutter' | 'line' | 'all';
 	private _selectionIsEmpty: boolean;
@@ -34,7 +34,6 @@ export class CurrentLineMarginHighlightOverlay extends DynamicViewOverlay {
 
 	public dispose(): void {
 		this._context.removeEventHandler(this);
-		this._context = null;
 		super.dispose();
 	}
 
@@ -64,7 +63,6 @@ export class CurrentLineMarginHighlightOverlay extends DynamicViewOverlay {
 		const selectionIsEmpty = e.selections[0].isEmpty();
 		if (this._selectionIsEmpty !== selectionIsEmpty) {
 			this._selectionIsEmpty = selectionIsEmpty;
-			hasChanged = true;
 			return true;
 		}
 

@@ -3,19 +3,19 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import * as browser from 'vs/base/browser/browser';
+import * as dom from 'vs/base/browser/dom';
+import { FastDomNode } from 'vs/base/browser/fastDomNode';
+import { IKeyboardEvent } from 'vs/base/browser/keyboardEvent';
 import { RunOnceScheduler } from 'vs/base/common/async';
+import { Emitter, Event } from 'vs/base/common/event';
+import { KeyCode } from 'vs/base/common/keyCodes';
+import { Disposable, IDisposable } from 'vs/base/common/lifecycle';
+import * as platform from 'vs/base/common/platform';
+import * as strings from 'vs/base/common/strings';
+import { ITextAreaWrapper, ITypeData, TextAreaState } from 'vs/editor/browser/controller/textAreaState';
 import { Position } from 'vs/editor/common/core/position';
 import { Selection } from 'vs/editor/common/core/selection';
-import * as strings from 'vs/base/common/strings';
-import { Event, Emitter } from 'vs/base/common/event';
-import { KeyCode } from 'vs/base/common/keyCodes';
-import { Disposable } from 'vs/base/common/lifecycle';
-import { ITypeData, TextAreaState, ITextAreaWrapper } from 'vs/editor/browser/controller/textAreaState';
-import * as browser from 'vs/base/browser/browser';
-import * as platform from 'vs/base/common/platform';
-import * as dom from 'vs/base/browser/dom';
-import { IKeyboardEvent } from 'vs/base/browser/keyboardEvent';
-import { FastDomNode } from 'vs/base/browser/fastDomNode';
 
 export interface ICompositionData {
 	data: string;
@@ -36,7 +36,7 @@ export interface IPasteData {
 
 export interface ITextAreaInputHost {
 	getPlainTextToCopy(): string;
-	getHTMLToCopy(): string;
+	getHTMLToCopy(): string | null;
 	getScreenReaderContent(currentState: TextAreaState): TextAreaState;
 	deduceModelPosition(viewAnchorPosition: Position, deltaOffset: number, lineFeedCnt: number): Position;
 }
@@ -105,6 +105,7 @@ export class TextAreaInput extends Disposable {
 	private readonly _asyncTriggerCut: RunOnceScheduler;
 
 	private _textAreaState: TextAreaState;
+	private _selectionChangeListener: IDisposable | null;
 
 	private _hasFocus: boolean;
 	private _isDoingComposition: boolean;
@@ -330,8 +331,9 @@ export class TextAreaInput extends Disposable {
 			this._lastTextAreaEvent = TextAreaInputEventType.blur;
 			this._setHasFocus(false);
 		}));
+	}
 
-
+	private _installSelectionChangeListener(): IDisposable {
 		// See https://github.com/Microsoft/vscode/issues/27216
 		// When using a Braille display, it is possible for users to reposition the
 		// system caret. This is reflected in Chrome as a `selectionchange` event.
@@ -351,7 +353,7 @@ export class TextAreaInput extends Disposable {
 		// `selectionchange` events often come multiple times for a single logical change
 		// so throttle multiple `selectionchange` events that burst in a short period of time.
 		let previousSelectionChangeEventTime = 0;
-		this._register(dom.addDisposableListener(document, 'selectionchange', (e) => {
+		return dom.addDisposableListener(document, 'selectionchange', (e) => {
 			if (!this._hasFocus) {
 				return;
 			}
@@ -400,10 +402,10 @@ export class TextAreaInput extends Disposable {
 			}
 
 			const _newSelectionStartPosition = this._textAreaState.deduceEditorPosition(newSelectionStart);
-			const newSelectionStartPosition = this._host.deduceModelPosition(_newSelectionStartPosition[0], _newSelectionStartPosition[1], _newSelectionStartPosition[2]);
+			const newSelectionStartPosition = this._host.deduceModelPosition(_newSelectionStartPosition[0]!, _newSelectionStartPosition[1], _newSelectionStartPosition[2]);
 
 			const _newSelectionEndPosition = this._textAreaState.deduceEditorPosition(newSelectionEnd);
-			const newSelectionEndPosition = this._host.deduceModelPosition(_newSelectionEndPosition[0], _newSelectionEndPosition[1], _newSelectionEndPosition[2]);
+			const newSelectionEndPosition = this._host.deduceModelPosition(_newSelectionEndPosition[0]!, _newSelectionEndPosition[1], _newSelectionEndPosition[2]);
 
 			const newSelection = new Selection(
 				newSelectionStartPosition.lineNumber, newSelectionStartPosition.column,
@@ -411,11 +413,15 @@ export class TextAreaInput extends Disposable {
 			);
 
 			this._onSelectionChangeRequest.fire(newSelection);
-		}));
+		});
 	}
 
 	public dispose(): void {
 		super.dispose();
+		if (this._selectionChangeListener) {
+			this._selectionChangeListener.dispose();
+			this._selectionChangeListener = null;
+		}
 	}
 
 	public focusTextArea(): void {
@@ -434,6 +440,14 @@ export class TextAreaInput extends Disposable {
 			return;
 		}
 		this._hasFocus = newHasFocus;
+
+		if (this._selectionChangeListener) {
+			this._selectionChangeListener.dispose();
+			this._selectionChangeListener = null;
+		}
+		if (this._hasFocus) {
+			this._selectionChangeListener = this._installSelectionChangeListener();
+		}
 
 		if (this._hasFocus) {
 			if (browser.isEdge) {
@@ -513,7 +527,7 @@ class ClipboardEventUtils {
 		throw new Error('ClipboardEventUtils.getTextData: Cannot use text data!');
 	}
 
-	public static setTextData(e: ClipboardEvent, text: string, richText: string): void {
+	public static setTextData(e: ClipboardEvent, text: string, richText: string | null): void {
 		if (e.clipboardData) {
 			e.clipboardData.setData('text/plain', text);
 			if (richText !== null) {

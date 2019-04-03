@@ -3,9 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import * as browser from 'vs/base/browser/browser';
 import { KeyCode, KeyCodeUtils, KeyMod, SimpleKeybinding } from 'vs/base/common/keyCodes';
 import * as platform from 'vs/base/common/platform';
-import * as browser from 'vs/base/browser/browser';
 
 let KEY_CODE_MAP: { [keyCode: number]: KeyCode } = new Array(230);
 let INVERSE_KEY_CODE_MAP: KeyCode[] = new Array(KeyCode.MAX_VALUE);
@@ -179,6 +179,9 @@ export function getCodeForKeyCode(keyCode: KeyCode): number {
 }
 
 export interface IKeyboardEvent {
+
+	readonly _standardKeyboardEventBrand: true;
+
 	readonly browserEvent: KeyboardEvent;
 	readonly target: HTMLElement;
 
@@ -206,6 +209,8 @@ const metaKeyMod = (platform.isMacintosh ? KeyMod.CtrlCmd : KeyMod.WinCtrl);
 
 export class StandardKeyboardEvent implements IKeyboardEvent {
 
+	readonly _standardKeyboardEventBrand = true;
+
 	public readonly browserEvent: KeyboardEvent;
 	public readonly target: HTMLElement;
 
@@ -220,7 +225,7 @@ export class StandardKeyboardEvent implements IKeyboardEvent {
 	private _asRuntimeKeybinding: SimpleKeybinding;
 
 	constructor(source: KeyboardEvent) {
-		let e = <KeyboardEvent>source;
+		let e = source;
 
 		this.browserEvent = e;
 		this.target = <HTMLElement>e.target;

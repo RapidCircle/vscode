@@ -13,7 +13,12 @@ export function popup(items: IContextMenuItem[], options?: IPopupOptions): void 
 
 	const contextMenuId = contextMenuIdPool++;
 	const onClickChannel = `vscode:onContextMenu${contextMenuId}`;
-	const onClickChannelHandler = (_event: Event, itemId: number, context: IContextMenuEvent) => processedItems[itemId].click(context);
+	const onClickChannelHandler = (_event: Event, itemId: number, context: IContextMenuEvent) => {
+		const item = processedItems[itemId];
+		if (item.click) {
+			item.click(context);
+		}
+	};
 
 	ipcRenderer.once(onClickChannel, onClickChannelHandler);
 	ipcRenderer.once(CONTEXT_MENU_CLOSE_CHANNEL, (_event: Event, closedContextMenuId: number) => {
@@ -32,7 +37,7 @@ export function popup(items: IContextMenuItem[], options?: IPopupOptions): void 
 }
 
 function createItem(item: IContextMenuItem, processedItems: IContextMenuItem[]): ISerializableContextMenuItem {
-	const serializableItem = {
+	const serializableItem: ISerializableContextMenuItem = {
 		id: processedItems.length,
 		label: item.label,
 		type: item.type,
@@ -40,7 +45,7 @@ function createItem(item: IContextMenuItem, processedItems: IContextMenuItem[]):
 		checked: item.checked,
 		enabled: typeof item.enabled === 'boolean' ? item.enabled : true,
 		visible: typeof item.visible === 'boolean' ? item.visible : true
-	} as ISerializableContextMenuItem;
+	};
 
 	processedItems.push(item);
 

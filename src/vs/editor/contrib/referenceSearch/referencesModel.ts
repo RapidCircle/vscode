@@ -5,13 +5,13 @@
 
 import { localize } from 'vs/nls';
 import { Event, Emitter } from 'vs/base/common/event';
-import { basename } from 'vs/base/common/paths';
+import { basename } from 'vs/base/common/resources';
 import { IDisposable, dispose, IReference } from 'vs/base/common/lifecycle';
 import * as strings from 'vs/base/common/strings';
 import { URI } from 'vs/base/common/uri';
 import { defaultGenerator } from 'vs/base/common/idGenerator';
 import { Range, IRange } from 'vs/editor/common/core/range';
-import { Location } from 'vs/editor/common/modes';
+import { Location, LocationLink } from 'vs/editor/common/modes';
 import { ITextModelService, ITextEditorModel } from 'vs/editor/common/services/resolverService';
 import { Position } from 'vs/editor/common/core/position';
 
@@ -23,7 +23,8 @@ export class OneReference {
 
 	constructor(
 		readonly parent: FileReferences,
-		private _range: IRange
+		private _range: IRange,
+		readonly isProviderFirst: boolean
 	) {
 		this.id = defaultGenerator.nextId();
 	}
@@ -44,7 +45,7 @@ export class OneReference {
 	getAriaMessage(): string {
 		return localize(
 			'aria.oneReference', "symbol in {0} on line {1} at column {2}",
-			basename(this.uri.fsPath), this.range.startLineNumber, this.range.startColumn
+			basename(this.uri), this.range.startLineNumber, this.range.startColumn
 		);
 	}
 }
@@ -60,7 +61,7 @@ export class FilePreview implements IDisposable {
 		dispose(this._modelReference);
 	}
 
-	preview(range: IRange, n: number = 8): { before: string; inside: string; after: string } {
+	preview(range: IRange, n: number = 8): { before: string; inside: string; after: string } | undefined {
 		const model = this._modelReference.object.textEditorModel;
 
 		if (!model) {
@@ -85,11 +86,11 @@ export class FilePreview implements IDisposable {
 export class FileReferences implements IDisposable {
 
 	private _children: OneReference[];
-	private _preview: FilePreview;
+	private _preview?: FilePreview;
 	private _resolved: boolean;
 	private _loadFailure: any;
 
-	constructor(private readonly _parent: ReferencesModel, private _uri: URI) {
+	constructor(private readonly _parent: ReferencesModel, private readonly _uri: URI) {
 		this._children = [];
 	}
 
@@ -109,7 +110,7 @@ export class FileReferences implements IDisposable {
 		return this._uri;
 	}
 
-	get preview(): FilePreview {
+	get preview(): FilePreview | undefined {
 		return this._preview;
 	}
 
@@ -120,9 +121,9 @@ export class FileReferences implements IDisposable {
 	getAriaMessage(): string {
 		const len = this.children.length;
 		if (len === 1) {
-			return localize('aria.fileReferences.1', "1 symbol in {0}, full path {1}", basename(this.uri.fsPath), this.uri.fsPath);
+			return localize('aria.fileReferences.1', "1 symbol in {0}, full path {1}", basename(this.uri), this.uri.fsPath);
 		} else {
-			return localize('aria.fileReferences.N', "{0} symbols in {1}, full path {2}", len, basename(this.uri.fsPath), this.uri.fsPath);
+			return localize('aria.fileReferences.N', "{0} symbols in {1}, full path {2}", len, basename(this.uri), this.uri.fsPath);
 		}
 	}
 
@@ -156,7 +157,7 @@ export class FileReferences implements IDisposable {
 	dispose(): void {
 		if (this._preview) {
 			this._preview.dispose();
-			this._preview = null;
+			this._preview = undefined;
 		}
 	}
 }
@@ -170,12 +171,13 @@ export class ReferencesModel implements IDisposable {
 	readonly _onDidChangeReferenceRange = new Emitter<OneReference>();
 	readonly onDidChangeReferenceRange: Event<OneReference> = this._onDidChangeReferenceRange.event;
 
-	constructor(references: Location[]) {
+	constructor(references: LocationLink[]) {
 		this._disposables = [];
 		// grouping and sorting
+		const [providersFirst] = references;
 		references.sort(ReferencesModel._compareReferences);
 
-		let current: FileReferences;
+		let current: FileReferences | undefined;
 		for (let ref of references) {
 			if (!current || current.uri.toString() !== ref.uri.toString()) {
 				// new group
@@ -187,7 +189,7 @@ export class ReferencesModel implements IDisposable {
 			if (current.children.length === 0
 				|| !Range.equalsRange(ref.range, current.children[current.children.length - 1].range)) {
 
-				let oneRef = new OneReference(current, ref.range);
+				let oneRef = new OneReference(current, ref.targetSelectionRange || ref.range, providersFirst === ref);
 				this._disposables.push(oneRef.onRefChanged((e) => this._onDidChangeReferenceRange.fire(e)));
 				this.references.push(oneRef);
 				current.children.push(oneRef);
@@ -239,7 +241,7 @@ export class ReferencesModel implements IDisposable {
 		}
 	}
 
-	nearestReference(resource: URI, position: Position): OneReference {
+	nearestReference(resource: URI, position: Position): OneReference | undefined {
 
 		const nearest = this.references.map((ref, idx) => {
 			return {
@@ -265,6 +267,15 @@ export class ReferencesModel implements IDisposable {
 			return this.references[nearest.idx];
 		}
 		return undefined;
+	}
+
+	firstReference(): OneReference | undefined {
+		for (const ref of this.references) {
+			if (ref.isProviderFirst) {
+				return ref;
+			}
+		}
+		return this.references[0];
 	}
 
 	dispose(): void {

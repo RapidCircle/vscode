@@ -4,28 +4,33 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { URI } from 'vs/base/common/uri';
-import { createDecorator } from 'vs/platform/instantiation/common/instantiation';
+import { IRange } from 'vs/editor/common/core/range';
 import { IChange, ILineChange } from 'vs/editor/common/editorCommon';
 import { IInplaceReplaceSupportResult, TextEdit } from 'vs/editor/common/modes';
-import { IRange } from 'vs/editor/common/core/range';
+import { createDecorator } from 'vs/platform/instantiation/common/instantiation';
 
 export const ID_EDITOR_WORKER_SERVICE = 'editorWorkerService';
 export const IEditorWorkerService = createDecorator<IEditorWorkerService>(ID_EDITOR_WORKER_SERVICE);
+
+export interface IDiffComputationResult {
+	identical: boolean;
+	changes: ILineChange[];
+}
 
 export interface IEditorWorkerService {
 	_serviceBrand: any;
 
 	canComputeDiff(original: URI, modified: URI): boolean;
-	computeDiff(original: URI, modified: URI, ignoreTrimWhitespace: boolean): Promise<ILineChange[]>;
+	computeDiff(original: URI, modified: URI, ignoreTrimWhitespace: boolean): Promise<IDiffComputationResult | null>;
 
 	canComputeDirtyDiff(original: URI, modified: URI): boolean;
-	computeDirtyDiff(original: URI, modified: URI, ignoreTrimWhitespace: boolean): Promise<IChange[]>;
+	computeDirtyDiff(original: URI, modified: URI, ignoreTrimWhitespace: boolean): Promise<IChange[] | null>;
 
-	computeMoreMinimalEdits(resource: URI, edits: TextEdit[]): Promise<TextEdit[]>;
+	computeMoreMinimalEdits(resource: URI, edits: TextEdit[] | null | undefined): Promise<TextEdit[] | undefined>;
 
 	canComputeWordRanges(resource: URI): boolean;
-	computeWordRanges(resource: URI, range: IRange): Promise<{ [word: string]: IRange[] }>;
+	computeWordRanges(resource: URI, range: IRange): Promise<{ [word: string]: IRange[] } | null>;
 
 	canNavigateValueSet(resource: URI): boolean;
-	navigateValueSet(resource: URI, range: IRange, up: boolean): Promise<IInplaceReplaceSupportResult>;
+	navigateValueSet(resource: URI, range: IRange, up: boolean): Promise<IInplaceReplaceSupportResult | null>;
 }
