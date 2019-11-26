@@ -4,13 +4,11 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Event, Emitter } from 'vs/base/common/event';
-import { Extensions, IEditorInputFactoryRegistry, EditorInput, toResource, IEditorIdentifier, IEditorCloseEvent, GroupIdentifier, SideBySideEditorInput, CloseDirection, IEditorInput } from 'vs/workbench/common/editor';
-import { URI } from 'vs/base/common/uri';
+import { Extensions, IEditorInputFactoryRegistry, EditorInput, IEditorIdentifier, IEditorCloseEvent, GroupIdentifier, CloseDirection, IEditorInput, SideBySideEditorInput } from 'vs/workbench/common/editor';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
 import { IConfigurationService, IConfigurationChangeEvent } from 'vs/platform/configuration/common/configuration';
-import { dispose, IDisposable, Disposable } from 'vs/base/common/lifecycle';
+import { dispose, Disposable, DisposableStore } from 'vs/base/common/lifecycle';
 import { Registry } from 'vs/platform/registry/common/platform';
-import { ResourceMap } from 'vs/base/common/map';
 import { coalesce } from 'vs/base/common/arrays';
 
 const EditorOpenPositioning = {
@@ -60,55 +58,55 @@ export class EditorGroup extends Disposable {
 	//#region events
 
 	private readonly _onDidEditorActivate = this._register(new Emitter<EditorInput>());
-	get onDidEditorActivate(): Event<EditorInput> { return this._onDidEditorActivate.event; }
+	readonly onDidEditorActivate = this._onDidEditorActivate.event;
 
 	private readonly _onDidEditorOpen = this._register(new Emitter<EditorInput>());
-	get onDidEditorOpen(): Event<EditorInput> { return this._onDidEditorOpen.event; }
+	readonly onDidEditorOpen = this._onDidEditorOpen.event;
 
 	private readonly _onDidEditorClose = this._register(new Emitter<EditorCloseEvent>());
-	get onDidEditorClose(): Event<EditorCloseEvent> { return this._onDidEditorClose.event; }
+	readonly onDidEditorClose = this._onDidEditorClose.event;
 
 	private readonly _onDidEditorDispose = this._register(new Emitter<EditorInput>());
-	get onDidEditorDispose(): Event<EditorInput> { return this._onDidEditorDispose.event; }
+	readonly onDidEditorDispose = this._onDidEditorDispose.event;
 
 	private readonly _onDidEditorBecomeDirty = this._register(new Emitter<EditorInput>());
-	get onDidEditorBecomeDirty(): Event<EditorInput> { return this._onDidEditorBecomeDirty.event; }
+	readonly onDidEditorBecomeDirty = this._onDidEditorBecomeDirty.event;
 
 	private readonly _onDidEditorLabelChange = this._register(new Emitter<EditorInput>());
-	get onDidEditorLabelChange(): Event<EditorInput> { return this._onDidEditorLabelChange.event; }
+	readonly onDidEditorLabelChange = this._onDidEditorLabelChange.event;
 
 	private readonly _onDidEditorMove = this._register(new Emitter<EditorInput>());
-	get onDidEditorMove(): Event<EditorInput> { return this._onDidEditorMove.event; }
+	readonly onDidEditorMove = this._onDidEditorMove.event;
 
 	private readonly _onDidEditorPin = this._register(new Emitter<EditorInput>());
-	get onDidEditorPin(): Event<EditorInput> { return this._onDidEditorPin.event; }
+	readonly onDidEditorPin = this._onDidEditorPin.event;
 
 	private readonly _onDidEditorUnpin = this._register(new Emitter<EditorInput>());
-	get onDidEditorUnpin(): Event<EditorInput> { return this._onDidEditorUnpin.event; }
+	readonly onDidEditorUnpin = this._onDidEditorUnpin.event;
 
 	//#endregion
 
 	private _id: GroupIdentifier;
+	get id(): GroupIdentifier { return this._id; }
 
 	private editors: EditorInput[] = [];
 	private mru: EditorInput[] = [];
-	private mapResourceToEditorCount: ResourceMap<number> = new ResourceMap<number>();
 
-	private preview: EditorInput | null; // editor in preview state
-	private active: EditorInput | null;  // editor in active state
+	private preview: EditorInput | null = null; // editor in preview state
+	private active: EditorInput | null = null;  // editor in active state
 
-	private editorOpenPositioning: 'left' | 'right' | 'first' | 'last';
-	private focusRecentEditorAfterClose: boolean;
+	private editorOpenPositioning: ('left' | 'right' | 'first' | 'last') | undefined;
+	private focusRecentEditorAfterClose: boolean | undefined;
 
 	constructor(
-		labelOrSerializedGroup: ISerializedEditorGroup,
+		labelOrSerializedGroup: ISerializedEditorGroup | undefined,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@IConfigurationService private readonly configurationService: IConfigurationService
 	) {
 		super();
 
 		if (isSerializedEditorGroup(labelOrSerializedGroup)) {
-			this.deserialize(labelOrSerializedGroup);
+			this._id = this.deserialize(labelOrSerializedGroup);
 		} else {
 			this._id = EditorGroup.IDS++;
 		}
@@ -126,10 +124,6 @@ export class EditorGroup extends Disposable {
 		this.focusRecentEditorAfterClose = this.configurationService.getValue('workbench.editor.focusRecentEditorAfterClose');
 	}
 
-	get id(): GroupIdentifier {
-		return this._id;
-	}
-
 	get count(): number {
 		return this.editors.length;
 	}
@@ -138,26 +132,8 @@ export class EditorGroup extends Disposable {
 		return mru ? this.mru.slice(0) : this.editors.slice(0);
 	}
 
-	getEditor(index: number): EditorInput | null;
-	getEditor(resource: URI): EditorInput | null;
-	getEditor(arg1: number | URI): EditorInput | null {
-		if (typeof arg1 === 'number') {
-			return this.editors[arg1];
-		}
-
-		const resource: URI = arg1;
-		if (!this.contains(resource)) {
-			return null; // fast check for resource opened or not
-		}
-
-		for (const editor of this.editors) {
-			const editorResource = toResource(editor, { supportSideBySide: true });
-			if (editorResource && editorResource.toString() === resource.toString()) {
-				return editor;
-			}
-		}
-
-		return null;
+	getEditorByIndex(index: number): EditorInput | undefined {
+		return this.editors[index];
 	}
 
 	get activeEditor(): EditorInput | null {
@@ -179,8 +155,8 @@ export class EditorGroup extends Disposable {
 	openEditor(editor: EditorInput, options?: IEditorOpenOptions): void {
 		const index = this.indexOf(editor);
 
-		const makePinned = options && options.pinned;
-		const makeActive = (options && options.active) || !this.activeEditor || (!makePinned && this.matches(this.preview, this.activeEditor));
+		const makePinned = options?.pinned;
+		const makeActive = options?.active || !this.activeEditor || (!makePinned && this.matches(this.preview, this.activeEditor));
 
 		// New editor
 		if (index === -1) {
@@ -270,30 +246,30 @@ export class EditorGroup extends Disposable {
 	}
 
 	private registerEditorListeners(editor: EditorInput): void {
-		const unbind: IDisposable[] = [];
+		const listeners = new DisposableStore();
 
 		// Re-emit disposal of editor input as our own event
 		const onceDispose = Event.once(editor.onDispose);
-		unbind.push(onceDispose(() => {
+		listeners.add(onceDispose(() => {
 			if (this.indexOf(editor) >= 0) {
 				this._onDidEditorDispose.fire(editor);
 			}
 		}));
 
 		// Re-Emit dirty state changes
-		unbind.push(editor.onDidChangeDirty(() => {
+		listeners.add(editor.onDidChangeDirty(() => {
 			this._onDidEditorBecomeDirty.fire(editor);
 		}));
 
 		// Re-Emit label changes
-		unbind.push(editor.onDidChangeLabel(() => {
+		listeners.add(editor.onDidChangeLabel(() => {
 			this._onDidEditorLabelChange.fire(editor);
 		}));
 
 		// Clean up dispose listeners once the editor gets closed
-		unbind.push(this.onDidEditorClose(event => {
+		listeners.add(this.onDidEditorClose(event => {
 			if (event.editor.matches(editor)) {
-				dispose(unbind);
+				dispose(listeners);
 			}
 		}));
 	}
@@ -512,7 +488,6 @@ export class EditorGroup extends Disposable {
 		// Add
 		if (!del && editor) {
 			this.mru.push(editor); // make it LRU editor
-			this.updateResourceMap(editor, false /* add */); // add new to resource map
 		}
 
 		// Remove / Replace
@@ -522,41 +497,11 @@ export class EditorGroup extends Disposable {
 			// Remove
 			if (del && !editor) {
 				this.mru.splice(indexInMRU, 1); // remove from MRU
-				this.updateResourceMap(editorToDeleteOrReplace, true /* delete */); // remove from resource map
 			}
 
 			// Replace
 			else if (del && editor) {
 				this.mru.splice(indexInMRU, 1, editor); // replace MRU at location
-				this.updateResourceMap(editor, false /* add */); // add new to resource map
-				this.updateResourceMap(editorToDeleteOrReplace, true /* delete */); // remove replaced from resource map
-			}
-		}
-	}
-
-	private updateResourceMap(editor: EditorInput, remove: boolean): void {
-		const resource = toResource(editor, { supportSideBySide: true });
-		if (resource) {
-
-			// It is possible to have the same resource opened twice (once as normal input and once as diff input)
-			// So we need to do ref counting on the resource to provide the correct picture
-			const counter = this.mapResourceToEditorCount.get(resource) || 0;
-
-			// Add
-			let newCounter: number;
-			if (!remove) {
-				newCounter = counter + 1;
-			}
-
-			// Delete
-			else {
-				newCounter = counter - 1;
-			}
-
-			if (newCounter > 0) {
-				this.mapResourceToEditorCount.set(resource, newCounter);
-			} else {
-				this.mapResourceToEditorCount.delete(resource);
 			}
 		}
 	}
@@ -575,28 +520,20 @@ export class EditorGroup extends Disposable {
 		return -1;
 	}
 
-	contains(editorOrResource: EditorInput | URI): boolean;
-	contains(editor: EditorInput, supportSideBySide?: boolean): boolean;
-	contains(editorOrResource: EditorInput | URI, supportSideBySide?: boolean): boolean {
-		if (editorOrResource instanceof EditorInput) {
-			const index = this.indexOf(editorOrResource);
-			if (index >= 0) {
+	contains(candidate: EditorInput, searchInSideBySideEditors?: boolean): boolean {
+		for (const editor of this.editors) {
+			if (this.matches(editor, candidate)) {
 				return true;
 			}
 
-			if (supportSideBySide && editorOrResource instanceof SideBySideEditorInput) {
-				const index = this.indexOf(editorOrResource.master);
-				if (index >= 0) {
+			if (searchInSideBySideEditors && editor instanceof SideBySideEditorInput) {
+				if (this.matches(editor.master, candidate) || this.matches(editor.details, candidate)) {
 					return true;
 				}
 			}
-
-			return false;
 		}
 
-		const counter = this.mapResourceToEditorCount.get(editorOrResource);
-
-		return typeof counter === 'number' && counter > 0;
+		return false;
 	}
 
 	private setMostRecentlyUsed(editor: EditorInput): void {
@@ -622,7 +559,6 @@ export class EditorGroup extends Disposable {
 		const group = this.instantiationService.createInstance(EditorGroup, undefined);
 		group.editors = this.editors.slice(0);
 		group.mru = this.mru.slice(0);
-		group.mapResourceToEditorCount = this.mapResourceToEditorCount.clone();
 		group.preview = this.preview;
 		group.active = this.active;
 		group.editorOpenPositioning = this.editorOpenPositioning;
@@ -664,7 +600,7 @@ export class EditorGroup extends Disposable {
 		};
 	}
 
-	private deserialize(data: ISerializedEditorGroup): void {
+	private deserialize(data: ISerializedEditorGroup): number {
 		const registry = Registry.as<IEditorInputFactoryRegistry>(Extensions.EditorInputFactories);
 
 		if (typeof data.id === 'number') {
@@ -681,7 +617,6 @@ export class EditorGroup extends Disposable {
 				const editor = factory.deserialize(this.instantiationService, e.value);
 				if (editor) {
 					this.registerEditorListeners(editor);
-					this.updateResourceMap(editor, false /* add */);
 				}
 
 				return editor;
@@ -689,10 +624,15 @@ export class EditorGroup extends Disposable {
 
 			return null;
 		}));
+
 		this.mru = data.mru.map(i => this.editors[i]);
+
 		this.active = this.mru[0];
+
 		if (typeof data.preview === 'number') {
 			this.preview = this.editors[data.preview];
 		}
+
+		return this._id;
 	}
 }

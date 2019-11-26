@@ -15,6 +15,10 @@
 	align-items: center;
 }
 
+.monaco-workbench .dialog-modal-block.dimmed {
+	background: rgba(0, 0, 0, 0.3);
+}
+
 /** Dialog: Container */
 .monaco-workbench .dialog-box {
 	display: flex;
@@ -23,12 +27,12 @@
 	min-width: 500px;
 	max-width: 90%;
 	min-height: 75px;
-	padding: 5px;
+	padding: 10px;
 }
 
 /** Dialog: Title Actions Row */
 .monaco-workbench .dialog-box .dialog-toolbar-row {
-	padding-right: 1px;
+	padding-bottom: 4px;
 }
 
 .monaco-workbench .dialog-box .action-label {
@@ -42,55 +46,19 @@
 }
 
 
-.monaco-workbench .dialog-box .dialog-close-action {
-	background: url('close.svg') center center no-repeat;
-}
-
-.vs-dark .monaco-workbench .dialog-box .dialog-close-action,
-.hc-black .monaco-workbench .dialog-box .dialog-close-action {
-	background: url('close-inverse.svg') center center no-repeat;
-}
-
 /** Dialog: Message Row */
 .monaco-workbench .dialog-box .dialog-message-row {
 	display: flex;
 	flex-grow: 1;
-	padding: 10px 15px 20px;
+	align-items: center;
+	padding: 0 10px;
 }
 
-.monaco-workbench .dialog-box .dialog-message-row .dialog-icon {
-	flex: 0 0 30px;
-	padding-right: 4px;
-	padding-left: 4px;
-	background-position: center;
-	background-repeat: no-repeat;
-}
-
-.vs .monaco-workbench .dialog-box .dialog-message-row .dialog-icon.icon-info {
-	background-image: url('info.svg');
-}
-
-.vs .monaco-workbench .dialog-box .dialog-message-row .dialog-icon.icon-warning {
-	background-image: url('warning.svg');
-}
-
-.vs .monaco-workbench .dialog-box .dialog-message-row .dialog-icon.icon-error {
-	background-image: url('error.svg');
-}
-
-.vs-dark .monaco-workbench .dialog-box .dialog-message-row .dialog-icon.icon-info,
-.hc-black .monaco-workbench .dialog-box .dialog-message-row .dialog-icon.icon-info {
-	background-image: url('info-inverse.svg');
-}
-
-.vs-dark .monaco-workbench .dialog-box .dialog-message-row .dialog-icon.icon-warning,
-.hc-black .monaco-workbench .dialog-box .dialog-message-row .dialog-icon.icon-warning {
-	background-image: url('warning-inverse.svg');
-}
-
-.vs-dark .monaco-workbench .dialog-box .dialog-message-row .dialog-icon.icon-error,
-.hc-black .monaco-workbench .dialog-box .dialog-message-row .dialog-icon.icon-error {
-	background-image: url('error-inverse.svg');
+.monaco-workbench .dialog-box .dialog-message-row > .codicon {
+	flex: 0 0 48px;
+	height: 48px;
+	align-self: baseline;
+	font-size: 48px;
 }
 
 /** Dialog: Message Container */
@@ -99,8 +67,10 @@
 	flex-direction: column;
 	overflow: hidden;
 	text-overflow: ellipsis;
-	padding-left: 20px;
+	padding-left: 24px;
 	user-select: text;
+	-webkit-user-select: text;
+	-ms-user-select: text;
 	word-wrap: break-word; /* never overflow long words, but break to next line */
 	white-space: normal;
 }
@@ -112,7 +82,10 @@
 	flex: 1; /* let the message always grow */
 	white-space: normal;
 	word-wrap: break-word; /* never overflow long words, but break to next line */
-	padding-bottom: 10px;
+	min-height: 48px; /* matches icon height */
+	margin-bottom: 8px;
+	display: flex;
+	align-items: center;
 }
 
 /** Dialog: Details */
@@ -127,6 +100,18 @@
 	outline-style: solid;
 }
 
+.monaco-workbench .dialog-box .dialog-message-row .dialog-message-container .dialog-checkbox-row {
+	padding: 15px 0px 0px;
+	display: flex;
+}
+
+.monaco-workbench .dialog-box .dialog-message-row .dialog-message-container .dialog-checkbox-row .dialog-checkbox-message {
+	cursor: pointer;
+	user-select: none;
+	-webkit-user-select: none;
+	-ms-user-select: none;
+}
+
 /** Dialog: Buttons Row */
 .monaco-workbench .dialog-box > .dialog-buttons-row {
 	display: flex;
@@ -139,6 +124,7 @@
 .monaco-workbench .dialog-box > .dialog-buttons-row {
 	display: flex;
 	white-space: nowrap;
+	padding: 20px 10px 10px;
 }
 
 /** Dialog: Buttons */
@@ -148,7 +134,8 @@
 }
 
 .monaco-workbench .dialog-box > .dialog-buttons-row > .dialog-buttons > .monaco-button {
-	max-width: fit-content;
+	width: fit-content;
+	width: -moz-fit-content;
 	padding: 5px 10px;
 	margin: 4px 5px; /* allows button focus outline to be visible */
 	overflow: hidden;

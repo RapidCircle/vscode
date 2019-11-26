@@ -5,7 +5,7 @@
 
 import * as assert from 'assert';
 import { URI } from 'vs/base/common/uri';
-import * as types from 'vs/workbench/api/node/extHostTypes';
+import * as types from 'vs/workbench/api/common/extHostTypes';
 import { isWindows } from 'vs/base/common/platform';
 
 function assertToJSON(a: any, expected: any) {
@@ -31,6 +31,7 @@ suite('ExtHostTypes', function () {
 			scheme: 'file',
 			path: '/path/test.file',
 			fsPath: '/path/test.file'.replace(/\//g, isWindows ? '\\' : '/'),
+			_sep: isWindows ? 1 : undefined,
 		});
 
 		assert.ok(uri.toString());
@@ -39,6 +40,7 @@ suite('ExtHostTypes', function () {
 			scheme: 'file',
 			path: '/path/test.file',
 			fsPath: '/path/test.file'.replace(/\//g, isWindows ? '\\' : '/'),
+			_sep: isWindows ? 1 : undefined,
 			external: 'file:///path/test.file'
 		});
 	});
@@ -525,6 +527,25 @@ suite('ExtHostTypes', function () {
 		string.appendVariable('BAR', b => { });
 		assert.equal(string.value, '${BAR}');
 
+		string = new types.SnippetString();
+		string.appendChoice(['b', 'a', 'r']);
+		assert.equal(string.value, '${1|b,a,r|}');
+
+		string = new types.SnippetString();
+		string.appendChoice(['b', 'a', 'r'], 0);
+		assert.equal(string.value, '${0|b,a,r|}');
+
+		string = new types.SnippetString();
+		string.appendText('foo').appendChoice(['far', 'boo']).appendText('bar');
+		assert.equal(string.value, 'foo${1|far,boo|}bar');
+
+		string = new types.SnippetString();
+		string.appendText('foo').appendChoice(['far', '$boo']).appendText('bar');
+		assert.equal(string.value, 'foo${1|far,\\$boo|}bar');
+
+		string = new types.SnippetString();
+		string.appendText('foo').appendPlaceholder('farboo').appendChoice(['far', 'boo']).appendText('bar');
+		assert.equal(string.value, 'foo${1:farboo}${2|far,boo|}bar');
 	});
 
 	test('instanceof doesn\'t work for FileSystemError #49386', function () {

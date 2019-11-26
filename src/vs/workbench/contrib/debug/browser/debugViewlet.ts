@@ -7,14 +7,14 @@ import 'vs/css!./media/debugViewlet';
 import * as nls from 'vs/nls';
 import { IAction } from 'vs/base/common/actions';
 import * as DOM from 'vs/base/browser/dom';
-import { IActionItem } from 'vs/base/browser/ui/actionbar/actionbar';
+import { IActionViewItem } from 'vs/base/browser/ui/actionbar/actionbar';
 import { ViewContainerViewlet } from 'vs/workbench/browser/parts/views/viewsViewlet';
 import { IDebugService, VIEWLET_ID, State, BREAKPOINTS_VIEW_ID, IDebugConfiguration, REPL_ID } from 'vs/workbench/contrib/debug/common/debug';
 import { StartAction, ConfigureAction, SelectAndStartAction, FocusSessionAction } from 'vs/workbench/contrib/debug/browser/debugActions';
-import { StartDebugActionItem, FocusSessionActionItem } from 'vs/workbench/contrib/debug/browser/debugActionItems';
+import { StartDebugActionViewItem, FocusSessionActionViewItem } from 'vs/workbench/contrib/debug/browser/debugActionViewItems';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
 import { IExtensionService } from 'vs/workbench/services/extensions/common/extensions';
-import { IProgressService, IProgressRunner } from 'vs/platform/progress/common/progress';
+import { IProgressService } from 'vs/platform/progress/common/progress';
 import { IWorkspaceContextService } from 'vs/platform/workspace/common/workspace';
 import { ITelemetryService } from 'vs/platform/telemetry/common/telemetry';
 import { IStorageService } from 'vs/platform/storage/common/storage';
@@ -26,21 +26,22 @@ import { memoize } from 'vs/base/common/decorators';
 import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
 import { DebugToolBar } from 'vs/workbench/contrib/debug/browser/debugToolBar';
 import { IKeybindingService } from 'vs/platform/keybinding/common/keybinding';
-import { ViewletPanel } from 'vs/workbench/browser/parts/views/panelViewlet';
+import { ViewletPane } from 'vs/workbench/browser/parts/views/paneViewlet';
 import { IMenu, MenuId, IMenuService, MenuItemAction } from 'vs/platform/actions/common/actions';
 import { IContextKeyService } from 'vs/platform/contextkey/common/contextkey';
-import { MenuItemActionItem } from 'vs/platform/actions/browser/menuItemActionItem';
+import { MenuEntryActionViewItem } from 'vs/platform/actions/browser/menuEntryActionViewItem';
 import { INotificationService } from 'vs/platform/notification/common/notification';
 import { TogglePanelAction } from 'vs/workbench/browser/panel';
 import { IPanelService } from 'vs/workbench/services/panel/common/panelService';
 
 export class DebugViewlet extends ViewContainerViewlet {
 
-	private startDebugActionItem: StartDebugActionItem;
-	private progressRunner: IProgressRunner;
-	private breakpointView: ViewletPanel;
-	private panelListeners = new Map<string, IDisposable>();
-	private debugToolBarMenu: IMenu;
+	private startDebugActionViewItem: StartDebugActionViewItem | undefined;
+	private progressResolve: (() => void) | undefined;
+	private breakpointView: ViewletPane | undefined;
+	private paneListeners = new Map<string, IDisposable>();
+	private debugToolBarMenu: IMenu | undefined;
+	private disposeOnTitleUpdate: IDisposable | undefined;
 
 	constructor(
 		@IWorkbenchLayoutService layoutService: IWorkbenchLayoutService,
@@ -80,8 +81,8 @@ export class DebugViewlet extends ViewContainerViewlet {
 	focus(): void {
 		super.focus();
 
-		if (this.startDebugActionItem) {
-			this.startDebugActionItem.focus();
+		if (this.startDebugActionViewItem) {
+			this.startDebugActionViewItem.focus();
 		}
 	}
 
@@ -112,9 +113,16 @@ export class DebugViewlet extends ViewContainerViewlet {
 
 		if (!this.debugToolBarMenu) {
 			this.debugToolBarMenu = this.menuService.createMenu(MenuId.DebugToolBar, this.contextKeyService);
-			this.toDispose.push(this.debugToolBarMenu);
+			this._register(this.debugToolBarMenu);
 		}
-		return DebugToolBar.getActions(this.debugToolBarMenu, this.debugService, this.instantiationService);
+
+		const { actions, disposable } = DebugToolBar.getActions(this.debugToolBarMenu, this.debugService, this.instantiationService);
+		if (this.disposeOnTitleUpdate) {
+			dispose(this.disposeOnTitleUpdate);
+		}
+		this.disposeOnTitleUpdate = disposable;
+
+		return actions;
 	}
 
 	get showInitialDebugActions(): boolean {
@@ -130,16 +138,16 @@ export class DebugViewlet extends ViewContainerViewlet {
 		return [this.selectAndStartAction, this.configureAction, this.toggleReplAction];
 	}
 
-	getActionItem(action: IAction): IActionItem | undefined {
+	getActionViewItem(action: IAction): IActionViewItem | undefined {
 		if (action.id === StartAction.ID) {
-			this.startDebugActionItem = this.instantiationService.createInstance(StartDebugActionItem, null, action);
-			return this.startDebugActionItem;
+			this.startDebugActionViewItem = this.instantiationService.createInstance(StartDebugActionViewItem, null, action);
+			return this.startDebugActionViewItem;
 		}
 		if (action.id === FocusSessionAction.ID) {
-			return new FocusSessionActionItem(action, this.debugService, this.themeService, this.contextViewService, this.configurationService);
+			return new FocusSessionActionViewItem(action, this.debugService, this.themeService, this.contextViewService, this.configurationService);
 		}
 		if (action instanceof MenuItemAction) {
-			return new MenuItemActionItem(action, this.keybindingService, this.notificationService, this.contextMenuService);
+			return new MenuEntryActionViewItem(action, this.keybindingService, this.notificationService, this.contextMenuService);
 		}
 
 		return undefined;
@@ -153,12 +161,15 @@ export class DebugViewlet extends ViewContainerViewlet {
 	}
 
 	private onDebugServiceStateChange(state: State): void {
-		if (this.progressRunner) {
-			this.progressRunner.done();
+		if (this.progressResolve) {
+			this.progressResolve();
+			this.progressResolve = undefined;
 		}
 
 		if (state === State.Initializing) {
-			this.progressRunner = this.progressService.show(true);
+			this.progressService.withProgress({ location: VIEWLET_ID }, _progress => {
+				return new Promise(resolve => this.progressResolve = resolve);
+			});
 		}
 
 		this.updateToolBar();
@@ -170,32 +181,32 @@ export class DebugViewlet extends ViewContainerViewlet {
 		}
 	}
 
-	addPanels(panels: { panel: ViewletPanel, size: number, index?: number }[]): void {
-		super.addPanels(panels);
+	addPanes(panes: { pane: ViewletPane, size: number, index?: number }[]): void {
+		super.addPanes(panes);
 
-		for (const { panel } of panels) {
+		for (const { pane: pane } of panes) {
 			// attach event listener to
-			if (panel.id === BREAKPOINTS_VIEW_ID) {
-				this.breakpointView = panel;
+			if (pane.id === BREAKPOINTS_VIEW_ID) {
+				this.breakpointView = pane;
 				this.updateBreakpointsMaxSize();
 			} else {
-				this.panelListeners.set(panel.id, panel.onDidChange(() => this.updateBreakpointsMaxSize()));
+				this.paneListeners.set(pane.id, pane.onDidChange(() => this.updateBreakpointsMaxSize()));
 			}
 		}
 	}
 
-	removePanels(panels: ViewletPanel[]): void {
-		super.removePanels(panels);
-		for (const panel of panels) {
-			dispose(this.panelListeners.get(panel.id));
-			this.panelListeners.delete(panel.id);
+	removePanes(panes: ViewletPane[]): void {
+		super.removePanes(panes);
+		for (const pane of panes) {
+			dispose(this.paneListeners.get(pane.id));
+			this.paneListeners.delete(pane.id);
 		}
 	}
 
 	private updateBreakpointsMaxSize(): void {
 		if (this.breakpointView) {
 			// We need to update the breakpoints view since all other views are collapsed #25384
-			const allOtherCollapsed = this.panels.every(view => !view.isExpanded() || view === this.breakpointView);
+			const allOtherCollapsed = this.panes.every(view => !view.isExpanded() || view === this.breakpointView);
 			this.breakpointView.maximumBodySize = allOtherCollapsed ? Number.POSITIVE_INFINITY : this.breakpointView.minimumBodySize;
 		}
 	}
@@ -203,12 +214,12 @@ export class DebugViewlet extends ViewContainerViewlet {
 
 class ToggleReplAction extends TogglePanelAction {
 	static readonly ID = 'debug.toggleRepl';
-	static LABEL = nls.localize({ comment: ['Debug is a noun in this context, not a verb.'], key: 'debugConsoleAction' }, 'Debug Console');
+	static readonly LABEL = nls.localize({ comment: ['Debug is a noun in this context, not a verb.'], key: 'debugConsoleAction' }, 'Debug Console');
 
 	constructor(id: string, label: string,
 		@IWorkbenchLayoutService layoutService: IWorkbenchLayoutService,
 		@IPanelService panelService: IPanelService
 	) {
-		super(id, label, REPL_ID, panelService, layoutService, 'debug-action toggle-repl');
+		super(id, label, REPL_ID, panelService, layoutService, 'debug-action codicon-terminal');
 	}
 }

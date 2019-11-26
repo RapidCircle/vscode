@@ -21,7 +21,7 @@ export class PreferencesEditorInput extends SideBySideEditorInput {
 		return PreferencesEditorInput.ID;
 	}
 
-	getTitle(verbosity: Verbosity): string | null {
+	getTitle(verbosity: Verbosity): string {
 		return this.master.getTitle(verbosity);
 	}
 }
@@ -31,7 +31,7 @@ export class DefaultPreferencesEditorInput extends ResourceEditorInput {
 	constructor(defaultSettingsResource: URI,
 		@ITextModelService textModelResolverService: ITextModelService
 	) {
-		super(nls.localize('settingsEditorName', "Default Settings"), '', defaultSettingsResource, textModelResolverService);
+		super(nls.localize('settingsEditorName', "Default Settings"), '', defaultSettingsResource, undefined, textModelResolverService);
 	}
 
 	getTypeId(): string {
@@ -60,7 +60,7 @@ export class KeybindingsEditorInput extends EditorInput {
 	static readonly ID: string = 'workbench.input.keybindings';
 	readonly keybindingsModel: KeybindingsEditorModel;
 
-	searchOptions: IKeybindingsEditorSearchOptions | null;
+	searchOptions: IKeybindingsEditorSearchOptions | null = null;
 
 	constructor(@IInstantiationService instantiationService: IInstantiationService) {
 		super();

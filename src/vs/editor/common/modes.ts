@@ -17,8 +17,8 @@ import { TokenizationResult, TokenizationResult2 } from 'vs/editor/common/core/t
 import * as model from 'vs/editor/common/model';
 import { LanguageFeatureRegistry } from 'vs/editor/common/modes/languageFeatureRegistry';
 import { TokenizationRegistryImpl } from 'vs/editor/common/modes/tokenizationRegistry';
-import { IMarkerData } from 'vs/platform/markers/common/markers';
 import { ExtensionIdentifier } from 'vs/platform/extensions/common/extensions';
+import { IMarkerData } from 'vs/platform/markers/common/markers';
 
 /**
  * Open ended enum at runtime
@@ -124,6 +124,8 @@ export const enum MetadataConsts {
 	FONT_STYLE_MASK = 0b00000000000000000011100000000000,
 	FOREGROUND_MASK = 0b00000000011111111100000000000000,
 	BACKGROUND_MASK = 0b11111111100000000000000000000000,
+
+	LANG_TTYPE_CMPL = 0b11111111111111111111100000000000,
 
 	LANGUAGEID_OFFSET = 0,
 	TOKEN_TYPE_OFFSET = 8,
@@ -367,6 +369,10 @@ export let completionKindFromString: {
 	};
 })();
 
+export const enum CompletionItemTag {
+	Deprecated = 1
+}
+
 export const enum CompletionItemInsertTextRule {
 	/**
 	 * Adjust whitespace/indentation of multiline insert texts to
@@ -396,6 +402,11 @@ export interface CompletionItem {
 	 * an icon is chosen by the editor.
 	 */
 	kind: CompletionItemKind;
+	/**
+	 * A modifier to the `kind` which affect how the item
+	 * is rendered, e.g. Deprecated is rendered with a strikeout
+	 */
+	tags?: ReadonlyArray<CompletionItemTag>;
 	/**
 	 * A human-readable string with additional information
 	 * about this item, like type or symbol information.
@@ -443,7 +454,7 @@ export interface CompletionItem {
 	 * *Note:* The range must be a [single line](#Range.isSingleLine) and it must
 	 * [contain](#Range.contains) the position at which completion has been [requested](#CompletionItemProvider.provideCompletionItems).
 	 */
-	range: IRange;
+	range: IRange | { insert: IRange, replace: IRange };
 	/**
 	 * An optional set of characters that when pressed while this completion is active will accept it first and
 	 * then type that character. *Note* that all commit characters should have `length=1` and that superfluous
@@ -464,7 +475,7 @@ export interface CompletionItem {
 	/**
 	 * @internal
 	 */
-	[key: string]: any;
+	_id?: [number, number];
 }
 
 export interface CompletionList {
@@ -510,6 +521,11 @@ export interface CompletionContext {
  */
 export interface CompletionItemProvider {
 
+	/**
+	 * @internal
+	 */
+	_debugDisplayName?: string;
+
 	triggerCharacters?: string[];
 	/**
 	 * Provide completion items for the given position and document.
@@ -532,6 +548,7 @@ export interface CodeAction {
 	diagnostics?: IMarkerData[];
 	kind?: string;
 	isPreferred?: boolean;
+	disabled?: string;
 }
 
 /**
@@ -550,6 +567,10 @@ export interface CodeActionContext {
 	trigger: CodeActionTrigger;
 }
 
+export interface CodeActionList extends IDisposable {
+	readonly actions: ReadonlyArray<CodeAction>;
+}
+
 /**
  * The code action interface defines the contract between extensions and
  * the [light bulb](https://code.visualstudio.com/docs/editor/editingevolved#_code-action) feature.
@@ -559,7 +580,7 @@ export interface CodeActionProvider {
 	/**
 	 * Provide commands for the given document and range.
 	 */
-	provideCodeActions(model: model.ITextModel, range: Range | Selection, context: CodeActionContext, token: CancellationToken): ProviderResult<CodeAction[]>;
+	provideCodeActions(model: model.ITextModel, range: Range | Selection, context: CodeActionContext, token: CancellationToken): ProviderResult<CodeActionList>;
 
 	/**
 	 * Optional list of CodeActionKinds that this provider returns.
@@ -624,6 +645,10 @@ export interface SignatureHelp {
 	activeParameter: number;
 }
 
+export interface SignatureHelpResult extends IDisposable {
+	value: SignatureHelp;
+}
+
 export enum SignatureHelpTriggerKind {
 	Invoke = 1,
 	TriggerCharacter = 2,
@@ -649,7 +674,7 @@ export interface SignatureHelpProvider {
 	/**
 	 * Provide help for the signature at the given position and document.
 	 */
-	provideSignatureHelp(model: model.ITextModel, position: Position, token: CancellationToken, context: SignatureHelpContext): ProviderResult<SignatureHelp>;
+	provideSignatureHelp(model: model.ITextModel, position: Position, token: CancellationToken, context: SignatureHelpContext): ProviderResult<SignatureHelpResult>;
 }
 
 /**
@@ -845,49 +870,95 @@ export const enum SymbolKind {
 	TypeParameter = 25
 }
 
+export const enum SymbolTag {
+	Deprecated = 1,
+}
 
 /**
  * @internal
  */
-export const symbolKindToCssClass = (function () {
+export namespace SymbolKinds {
 
-	const _fromMapping: { [n: number]: string } = Object.create(null);
-	_fromMapping[SymbolKind.File] = 'file';
-	_fromMapping[SymbolKind.Module] = 'module';
-	_fromMapping[SymbolKind.Namespace] = 'namespace';
-	_fromMapping[SymbolKind.Package] = 'package';
-	_fromMapping[SymbolKind.Class] = 'class';
-	_fromMapping[SymbolKind.Method] = 'method';
-	_fromMapping[SymbolKind.Property] = 'property';
-	_fromMapping[SymbolKind.Field] = 'field';
-	_fromMapping[SymbolKind.Constructor] = 'constructor';
-	_fromMapping[SymbolKind.Enum] = 'enum';
-	_fromMapping[SymbolKind.Interface] = 'interface';
-	_fromMapping[SymbolKind.Function] = 'function';
-	_fromMapping[SymbolKind.Variable] = 'variable';
-	_fromMapping[SymbolKind.Constant] = 'constant';
-	_fromMapping[SymbolKind.String] = 'string';
-	_fromMapping[SymbolKind.Number] = 'number';
-	_fromMapping[SymbolKind.Boolean] = 'boolean';
-	_fromMapping[SymbolKind.Array] = 'array';
-	_fromMapping[SymbolKind.Object] = 'object';
-	_fromMapping[SymbolKind.Key] = 'key';
-	_fromMapping[SymbolKind.Null] = 'null';
-	_fromMapping[SymbolKind.EnumMember] = 'enum-member';
-	_fromMapping[SymbolKind.Struct] = 'struct';
-	_fromMapping[SymbolKind.Event] = 'event';
-	_fromMapping[SymbolKind.Operator] = 'operator';
-	_fromMapping[SymbolKind.TypeParameter] = 'type-parameter';
+	const byName = new Map<string, SymbolKind>();
+	byName.set('file', SymbolKind.File);
+	byName.set('module', SymbolKind.Module);
+	byName.set('namespace', SymbolKind.Namespace);
+	byName.set('package', SymbolKind.Package);
+	byName.set('class', SymbolKind.Class);
+	byName.set('method', SymbolKind.Method);
+	byName.set('property', SymbolKind.Property);
+	byName.set('field', SymbolKind.Field);
+	byName.set('constructor', SymbolKind.Constructor);
+	byName.set('enum', SymbolKind.Enum);
+	byName.set('interface', SymbolKind.Interface);
+	byName.set('function', SymbolKind.Function);
+	byName.set('variable', SymbolKind.Variable);
+	byName.set('constant', SymbolKind.Constant);
+	byName.set('string', SymbolKind.String);
+	byName.set('number', SymbolKind.Number);
+	byName.set('boolean', SymbolKind.Boolean);
+	byName.set('array', SymbolKind.Array);
+	byName.set('object', SymbolKind.Object);
+	byName.set('key', SymbolKind.Key);
+	byName.set('null', SymbolKind.Null);
+	byName.set('enum-member', SymbolKind.EnumMember);
+	byName.set('struct', SymbolKind.Struct);
+	byName.set('event', SymbolKind.Event);
+	byName.set('operator', SymbolKind.Operator);
+	byName.set('type-parameter', SymbolKind.TypeParameter);
 
-	return function toCssClassName(kind: SymbolKind, inline?: boolean): string {
-		return `symbol-icon ${inline ? 'inline' : 'block'} ${_fromMapping[kind] || 'property'}`;
-	};
-})();
+	const byKind = new Map<SymbolKind, string>();
+	byKind.set(SymbolKind.File, 'file');
+	byKind.set(SymbolKind.Module, 'module');
+	byKind.set(SymbolKind.Namespace, 'namespace');
+	byKind.set(SymbolKind.Package, 'package');
+	byKind.set(SymbolKind.Class, 'class');
+	byKind.set(SymbolKind.Method, 'method');
+	byKind.set(SymbolKind.Property, 'property');
+	byKind.set(SymbolKind.Field, 'field');
+	byKind.set(SymbolKind.Constructor, 'constructor');
+	byKind.set(SymbolKind.Enum, 'enum');
+	byKind.set(SymbolKind.Interface, 'interface');
+	byKind.set(SymbolKind.Function, 'function');
+	byKind.set(SymbolKind.Variable, 'variable');
+	byKind.set(SymbolKind.Constant, 'constant');
+	byKind.set(SymbolKind.String, 'string');
+	byKind.set(SymbolKind.Number, 'number');
+	byKind.set(SymbolKind.Boolean, 'boolean');
+	byKind.set(SymbolKind.Array, 'array');
+	byKind.set(SymbolKind.Object, 'object');
+	byKind.set(SymbolKind.Key, 'key');
+	byKind.set(SymbolKind.Null, 'null');
+	byKind.set(SymbolKind.EnumMember, 'enum-member');
+	byKind.set(SymbolKind.Struct, 'struct');
+	byKind.set(SymbolKind.Event, 'event');
+	byKind.set(SymbolKind.Operator, 'operator');
+	byKind.set(SymbolKind.TypeParameter, 'type-parameter');
+	/**
+	 * @internal
+	 */
+	export function fromString(value: string): SymbolKind | undefined {
+		return byName.get(value);
+	}
+	/**
+	 * @internal
+	 */
+	export function toString(kind: SymbolKind): string | undefined {
+		return byKind.get(kind);
+	}
+	/**
+	 * @internal
+	 */
+	export function toCssClassName(kind: SymbolKind, inline?: boolean): string {
+		return `codicon ${inline ? 'inline' : 'block'} codicon-symbol-${byKind.get(kind) || 'property'}`;
+	}
+}
 
 export interface DocumentSymbol {
 	name: string;
 	detail: string;
 	kind: SymbolKind;
+	tags: ReadonlyArray<SymbolTag>;
 	containerName?: string;
 	range: IRange;
 	selectionRange: IRange;
@@ -896,7 +967,7 @@ export interface DocumentSymbol {
 
 /**
  * The document symbol provider interface defines the contract between extensions and
- * the [go to symbol](https://code.visualstudio.com/docs/editor/editingevolved#_goto-symbol)-feature.
+ * the [go to symbol](https://code.visualstudio.com/docs/editor/editingevolved#_go-to-symbol)-feature.
  */
 export interface DocumentSymbolProvider {
 
@@ -1000,12 +1071,18 @@ export interface IInplaceReplaceSupportResult {
 export interface ILink {
 	range: IRange;
 	url?: URI | string;
+	tooltip?: string;
+}
+
+export interface ILinksList {
+	links: ILink[];
+	dispose?(): void;
 }
 /**
  * A provider of links.
  */
 export interface LinkProvider {
-	provideLinks(model: model.ITextModel, token: CancellationToken): ProviderResult<ILink[]>;
+	provideLinks(model: model.ITextModel, token: CancellationToken): ProviderResult<ILinksList>;
 	resolveLink?: (link: ILink, token: CancellationToken) => ProviderResult<ILink>;
 }
 
@@ -1088,7 +1165,6 @@ export interface DocumentColorProvider {
 }
 
 export interface SelectionRange {
-	kind: string;
 	range: IRange;
 }
 
@@ -1209,21 +1285,21 @@ export interface Command {
 /**
  * @internal
  */
-export interface CommentInfo {
-	extensionId?: string;
-	threads: CommentThread[];
-	commentingRanges?: (IRange[] | CommentingRanges);
-	reply?: Command;
-	draftMode?: DraftMode;
+export interface CommentThreadTemplate {
+	controllerHandle: number;
+	label: string;
+	acceptInputCommand?: Command;
+	additionalCommands?: Command[];
+	deleteCommand?: Command;
 }
 
 /**
  * @internal
  */
-export enum DraftMode {
-	NotSupported,
-	InDraft,
-	NotInDraft
+export interface CommentInfo {
+	extensionId?: string;
+	threads: CommentThread[];
+	commentingRanges: CommentingRanges;
 }
 
 /**
@@ -1263,26 +1339,24 @@ export interface CommentInput {
 /**
  * @internal
  */
-export interface CommentThread2 {
+export interface CommentThread {
 	commentThreadHandle: number;
+	controllerHandle: number;
 	extensionId?: string;
-	threadId: string | null;
+	threadId: string;
 	resource: string | null;
 	range: IRange;
-	label: string;
+	label: string | undefined;
+	contextValue: string | undefined;
 	comments: Comment[] | undefined;
 	onDidChangeComments: Event<Comment[] | undefined>;
 	collapsibleState?: CommentThreadCollapsibleState;
 	input?: CommentInput;
 	onDidChangeInput: Event<CommentInput | undefined>;
-	acceptInputCommand?: Command;
-	additionalCommands?: Command[];
-	deleteCommand?: Command;
-	onDidChangeAcceptInputCommand: Event<Command | undefined>;
-	onDidChangeAdditionalCommands: Event<Command[] | undefined>;
 	onDidChangeRange: Event<IRange>;
-	onDidChangeLabel: Event<string>;
+	onDidChangeLabel: Event<string | undefined>;
 	onDidChangeCollasibleState: Event<CommentThreadCollapsibleState | undefined>;
+	isDisposed: boolean;
 }
 
 /**
@@ -1292,29 +1366,6 @@ export interface CommentThread2 {
 export interface CommentingRanges {
 	readonly resource: URI;
 	ranges: IRange[];
-	newCommentThreadCommand?: Command;
-	newCommentThreadCallback?: (uri: UriComponents, range: IRange) => Promise<void>;
-}
-
-/**
- * @internal
- */
-export interface CommentThread {
-	extensionId?: string;
-	threadId: string | null;
-	resource: string | null;
-	range: IRange;
-	comments: Comment[] | undefined;
-	collapsibleState?: CommentThreadCollapsibleState;
-	reply?: Command;
-}
-
-/**
- * @internal
- */
-export interface NewCommentAction {
-	ranges: IRange[];
-	actions: Command[];
 }
 
 /**
@@ -1331,19 +1382,23 @@ export interface CommentReaction {
 /**
  * @internal
  */
+export enum CommentMode {
+	Editing = 0,
+	Preview = 1
+}
+
+/**
+ * @internal
+ */
 export interface Comment {
-	readonly commentId: string;
+	readonly uniqueIdInThread: number;
 	readonly body: IMarkdownString;
 	readonly userName: string;
 	readonly userIconPath?: string;
-	readonly canEdit?: boolean;
-	readonly canDelete?: boolean;
-	readonly selectCommand?: Command;
-	readonly editCommand?: Command;
-	readonly deleteCommand?: Command;
-	readonly isDraft?: boolean;
+	readonly contextValue?: string;
 	readonly commentReactions?: CommentReaction[];
 	readonly label?: string;
+	readonly mode?: CommentMode;
 }
 
 /**
@@ -1353,54 +1408,25 @@ export interface CommentThreadChangedEvent {
 	/**
 	 * Added comment threads.
 	 */
-	readonly added: (CommentThread | CommentThread2)[];
+	readonly added: CommentThread[];
 
 	/**
 	 * Removed comment threads.
 	 */
-	readonly removed: (CommentThread | CommentThread2)[];
+	readonly removed: CommentThread[];
 
 	/**
 	 * Changed comment threads.
 	 */
-	readonly changed: (CommentThread | CommentThread2)[];
-
-	/**
-	 * changed draft mode.
-	 */
-	readonly draftMode?: DraftMode;
+	readonly changed: CommentThread[];
 }
 
 /**
  * @internal
  */
-export interface DocumentCommentProvider {
-	provideDocumentComments(resource: URI, token: CancellationToken): Promise<CommentInfo | null>;
-	createNewCommentThread(resource: URI, range: Range, text: string, token: CancellationToken): Promise<CommentThread | null>;
-	replyToCommentThread(resource: URI, range: Range, thread: CommentThread, text: string, token: CancellationToken): Promise<CommentThread | null>;
-	editComment(resource: URI, comment: Comment, text: string, token: CancellationToken): Promise<void>;
-	deleteComment(resource: URI, comment: Comment, token: CancellationToken): Promise<void>;
-	startDraft?(resource: URI, token: CancellationToken): Promise<void>;
-	deleteDraft?(resource: URI, token: CancellationToken): Promise<void>;
-	finishDraft?(resource: URI, token: CancellationToken): Promise<void>;
-
-	startDraftLabel?: string;
-	deleteDraftLabel?: string;
-	finishDraftLabel?: string;
-
-	addReaction?(resource: URI, comment: Comment, reaction: CommentReaction, token: CancellationToken): Promise<void>;
-	deleteReaction?(resource: URI, comment: Comment, reaction: CommentReaction, token: CancellationToken): Promise<void>;
-	reactionGroup?: CommentReaction[];
-
-	onDidChangeCommentThreads?(): Event<CommentThreadChangedEvent>;
-}
-
-/**
- * @internal
- */
-export interface WorkspaceCommentProvider {
-	provideWorkspaceComments(token: CancellationToken): Promise<CommentThread[]>;
-	onDidChangeCommentThreads(): Event<CommentThreadChangedEvent>;
+export interface IWebviewPortMapping {
+	webviewPort: number;
+	extensionHostPort: number;
 }
 
 /**
@@ -1410,7 +1436,7 @@ export interface IWebviewOptions {
 	readonly enableScripts?: boolean;
 	readonly enableCommandUris?: boolean;
 	readonly localResourceRoots?: ReadonlyArray<URI>;
-	readonly portMapping?: ReadonlyArray<{ port: number, resolvedPort: number }>;
+	readonly portMapping?: ReadonlyArray<IWebviewPortMapping>;
 }
 
 /**
@@ -1421,15 +1447,49 @@ export interface IWebviewPanelOptions {
 	readonly retainContextWhenHidden?: boolean;
 }
 
-export interface ICodeLensSymbol {
+
+export interface CodeLens {
 	range: IRange;
 	id?: string;
 	command?: Command;
 }
+
+export interface CodeLensList {
+	lenses: CodeLens[];
+	dispose(): void;
+}
+
 export interface CodeLensProvider {
 	onDidChange?: Event<this>;
-	provideCodeLenses(model: model.ITextModel, token: CancellationToken): ProviderResult<ICodeLensSymbol[]>;
-	resolveCodeLens?(model: model.ITextModel, codeLens: ICodeLensSymbol, token: CancellationToken): ProviderResult<ICodeLensSymbol>;
+	provideCodeLenses(model: model.ITextModel, token: CancellationToken): ProviderResult<CodeLensList>;
+	resolveCodeLens?(model: model.ITextModel, codeLens: CodeLens, token: CancellationToken): ProviderResult<CodeLens>;
+}
+
+export interface SemanticColoringLegend {
+	readonly tokenTypes: string[];
+	readonly tokenModifiers: string[];
+}
+
+export interface SemanticColoringArea {
+	/**
+	 * The zero-based line value where this token block begins.
+	 */
+	readonly line: number;
+	/**
+	 * The actual token block encoded data.
+	 */
+	readonly data: Uint32Array;
+
+}
+
+export interface SemanticColoring {
+	readonly areas: SemanticColoringArea[];
+	dispose(): void;
+}
+
+export interface SemanticColoringProvider {
+	getLegend(): SemanticColoringLegend;
+	provideSemanticColoring(model: model.ITextModel, token: CancellationToken): ProviderResult<SemanticColoring>;
 }
 
 // --- feature registries ------
@@ -1533,6 +1593,11 @@ export const SelectionRangeRegistry = new LanguageFeatureRegistry<SelectionRange
  * @internal
  */
 export const FoldingRangeProviderRegistry = new LanguageFeatureRegistry<FoldingRangeProvider>();
+
+/**
+ * @internal
+ */
+export const SemanticColoringProviderRegistry = new LanguageFeatureRegistry<SemanticColoringProvider>();
 
 /**
  * @internal

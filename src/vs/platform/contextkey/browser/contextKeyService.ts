@@ -3,8 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Emitter, Event } from 'vs/base/common/event';
-import { IDisposable, dispose } from 'vs/base/common/lifecycle';
+import { Emitter, Event, PauseableEmitter } from 'vs/base/common/event';
+import { IDisposable, DisposableStore } from 'vs/base/common/lifecycle';
 import { keys } from 'vs/base/common/map';
 import { CommandsRegistry } from 'vs/platform/commands/common/commands';
 import { ConfigurationTarget, IConfigurationService } from 'vs/platform/configuration/common/configuration';
@@ -87,7 +87,7 @@ class NullContext extends Context {
 
 class ConfigAwareContextValuesContainer extends Context {
 
-	private static _keyPrefix = 'config.';
+	private static readonly _keyPrefix = 'config.';
 
 	private readonly _values = new Map<string, any>();
 	private readonly _listener: IDisposable;
@@ -165,44 +165,45 @@ class ConfigAwareContextValuesContainer extends Context {
 
 class ContextKey<T> implements IContextKey<T> {
 
-	private _parent: AbstractContextKeyService;
+	private _service: AbstractContextKeyService;
 	private _key: string;
 	private _defaultValue: T | undefined;
 
-	constructor(parent: AbstractContextKeyService, key: string, defaultValue: T | undefined) {
-		this._parent = parent;
+	constructor(service: AbstractContextKeyService, key: string, defaultValue: T | undefined) {
+		this._service = service;
 		this._key = key;
 		this._defaultValue = defaultValue;
 		this.reset();
 	}
 
 	public set(value: T): void {
-		this._parent.setContext(this._key, value);
+		this._service.setContext(this._key, value);
 	}
 
 	public reset(): void {
 		if (typeof this._defaultValue === 'undefined') {
-			this._parent.removeContext(this._key);
+			this._service.removeContext(this._key);
 		} else {
-			this._parent.setContext(this._key, this._defaultValue);
+			this._service.setContext(this._key, this._defaultValue);
 		}
 	}
 
 	public get(): T | undefined {
-		return this._parent.getContextKeyValue<T>(this._key);
+		return this._service.getContextKeyValue<T>(this._key);
 	}
 }
 
 class SimpleContextKeyChangeEvent implements IContextKeyChangeEvent {
-	constructor(private readonly _key: string) { }
+	constructor(readonly key: string) { }
 	affectsSome(keys: IReadableSet<string>): boolean {
-		return keys.has(this._key);
+		return keys.has(this.key);
 	}
 }
+
 class ArrayContextKeyChangeEvent implements IContextKeyChangeEvent {
-	constructor(private readonly _keys: string[]) { }
+	constructor(readonly keys: string[]) { }
 	affectsSome(keys: IReadableSet<string>): boolean {
-		for (const key of this._keys) {
+		for (const key of this.keys) {
 			if (keys.has(key)) {
 				return true;
 			}
@@ -211,11 +212,23 @@ class ArrayContextKeyChangeEvent implements IContextKeyChangeEvent {
 	}
 }
 
+class CompositeContextKeyChangeEvent implements IContextKeyChangeEvent {
+	constructor(readonly events: IContextKeyChangeEvent[]) { }
+	affectsSome(keys: IReadableSet<string>): boolean {
+		for (const e of this.events) {
+			if (e.affectsSome(keys)) {
+				return true;
+			}
+		}
+		return false;
+	}
+}
+
 export abstract class AbstractContextKeyService implements IContextKeyService {
-	public _serviceBrand: any;
+	public _serviceBrand: undefined;
 
 	protected _isDisposed: boolean;
-	protected _onDidChangeContext = new Emitter<IContextKeyChangeEvent>();
+	protected _onDidChangeContext = new PauseableEmitter<IContextKeyChangeEvent>({ merge: input => new CompositeContextKeyChangeEvent(input) });
 	protected _myContextId: number;
 
 	constructor(myContextId: number) {
@@ -235,11 +248,21 @@ export abstract class AbstractContextKeyService implements IContextKeyService {
 	public get onDidChangeContext(): Event<IContextKeyChangeEvent> {
 		return this._onDidChangeContext.event;
 	}
+
+	bufferChangeEvents(callback: Function): void {
+		this._onDidChangeContext.pause();
+		try {
+			callback();
+		} finally {
+			this._onDidChangeContext.resume();
+		}
+	}
+
 	public createScoped(domNode: IContextKeyServiceTarget): IContextKeyService {
 		if (this._isDisposed) {
 			throw new Error(`AbstractContextKeyService has been disposed`);
 		}
-		return new ScopedContextKeyService(this, this._onDidChangeContext, domNode);
+		return new ScopedContextKeyService(this, domNode);
 	}
 
 	public contextMatchesRules(rules: ContextKeyExpr | undefined): boolean {
@@ -300,7 +323,7 @@ export class ContextKeyService extends AbstractContextKeyService implements ICon
 	private _lastContextId: number;
 	private readonly _contexts = new Map<number, Context>();
 
-	private _toDispose: IDisposable[] = [];
+	private readonly _toDispose = new DisposableStore();
 
 	constructor(@IConfigurationService configurationService: IConfigurationService) {
 		super(0);
@@ -309,7 +332,7 @@ export class ContextKeyService extends AbstractContextKeyService implements ICon
 
 		const myContext = new ConfigAwareContextValuesContainer(this._myContextId, configurationService, this._onDidChangeContext);
 		this._contexts.set(this._myContextId, myContext);
-		this._toDispose.push(myContext);
+		this._toDispose.add(myContext);
 
 		// Uncomment this to see the contexts continuously logged
 		// let lastLoggedValue: string | null = null;
@@ -325,7 +348,7 @@ export class ContextKeyService extends AbstractContextKeyService implements ICon
 
 	public dispose(): void {
 		this._isDisposed = true;
-		this._toDispose = dispose(this._toDispose);
+		this._toDispose.dispose();
 	}
 
 	public getContextValuesContainer(contextId: number): Context {
@@ -356,10 +379,9 @@ class ScopedContextKeyService extends AbstractContextKeyService {
 	private _parent: AbstractContextKeyService;
 	private _domNode: IContextKeyServiceTarget | undefined;
 
-	constructor(parent: AbstractContextKeyService, emitter: Emitter<IContextKeyChangeEvent>, domNode?: IContextKeyServiceTarget) {
+	constructor(parent: AbstractContextKeyService, domNode?: IContextKeyServiceTarget) {
 		super(parent.createChildContext());
 		this._parent = parent;
-		this._onDidChangeContext = emitter;
 
 		if (domNode) {
 			this._domNode = domNode;
@@ -377,7 +399,7 @@ class ScopedContextKeyService extends AbstractContextKeyService {
 	}
 
 	public get onDidChangeContext(): Event<IContextKeyChangeEvent> {
-		return this._parent.onDidChangeContext;
+		return Event.any(this._parent.onDidChangeContext, this._onDidChangeContext.event);
 	}
 
 	public getContextValuesContainer(contextId: number): Context {

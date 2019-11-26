@@ -16,73 +16,34 @@
 
 declare module 'vscode' {
 
-	//#region Joh - call hierarchy
-
-	export enum CallHierarchyDirection {
-		CallsFrom = 1,
-		CallsTo = 2,
-	}
-
-	export class CallHierarchyItem {
-		kind: SymbolKind;
-		name: string;
-		detail?: string;
-		uri: Uri;
-		range: Range;
-		selectionRange: Range;
-
-		constructor(kind: SymbolKind, name: string, detail: string, uri: Uri, range: Range, selectionRange: Range);
-	}
-
-	export interface CallHierarchyItemProvider {
-
-		/**
-		 * Given a document and position compute a call hierarchy item. This is justed as
-		 * anchor for call hierarchy and then `resolveCallHierarchyItem` is being called.
-		 */
-		provideCallHierarchyItem(
-			document: TextDocument,
-			postion: Position,
-			token: CancellationToken
-		): ProviderResult<CallHierarchyItem>;
-
-		/**
-		 * Resolve a call hierarchy item, e.g. compute all calls from or to a function.
-		 * The result is an array of item/location-tuples. The location in the returned tuples
-		 * is always relative to the "caller" with the caller either being the provided item or
-		 * the returned item.
-		 *
-		 * @param item A call hierarchy item previously returned from `provideCallHierarchyItem` or `resolveCallHierarchyItem`
-		 * @param direction Resolve calls from a function or calls to a function
-		 * @param token A cancellation token
-		 */
-		resolveCallHierarchyItem(
-			item: CallHierarchyItem,
-			direction: CallHierarchyDirection,
-			token: CancellationToken
-		): ProviderResult<[CallHierarchyItem, Location[]][]>;
-	}
-
-	export namespace languages {
-		export function registerCallHierarchyProvider(selector: DocumentSelector, provider: CallHierarchyItemProvider): Disposable;
-	}
-
-	//#endregion
-
-
 	//#region Alex - resolvers
+
+	export interface RemoteAuthorityResolverContext {
+		resolveAttempt: number;
+	}
 
 	export class ResolvedAuthority {
 		readonly host: string;
 		readonly port: number;
-		debugListenPort?: number;
-		debugConnectPort?: number;
 
 		constructor(host: string, port: number);
 	}
 
+	export interface ResolvedOptions {
+		extensionHostEnv?: { [key: string]: string | null };
+	}
+
+	export type ResolverResult = ResolvedAuthority & ResolvedOptions;
+
+	export class RemoteAuthorityResolverError extends Error {
+		static NotAvailable(message?: string, handled?: boolean): RemoteAuthorityResolverError;
+		static TemporarilyNotAvailable(message?: string): RemoteAuthorityResolverError;
+
+		constructor(message?: string);
+	}
+
 	export interface RemoteAuthorityResolver {
-		resolve(authority: string): ResolvedAuthority | Thenable<ResolvedAuthority>;
+		resolve(authority: string, context: RemoteAuthorityResolverContext): ResolverResult | Thenable<ResolverResult>;
 	}
 
 	export interface ResourceLabelFormatter {
@@ -107,34 +68,84 @@ declare module 'vscode' {
 
 	//#endregion
 
+	//#region Alex - semantic coloring
 
-	// #region Joh - code insets
+	export class SemanticColoringLegend {
+		public readonly tokenTypes: string[];
+		public readonly tokenModifiers: string[];
 
-	/**
-	 */
-	export class CodeInset {
-		range: Range;
-		height?: number;
-		constructor(range: Range, height?: number);
+		constructor(tokenTypes: string[], tokenModifiers: string[]);
 	}
 
-	export interface CodeInsetProvider {
-		onDidChangeCodeInsets?: Event<void>;
-		provideCodeInsets(document: TextDocument, token: CancellationToken): ProviderResult<CodeInset[]>;
-		resolveCodeInset(codeInset: CodeInset, webview: Webview, token: CancellationToken): ProviderResult<CodeInset>;
+	export class SemanticColoringArea {
+		/**
+		 * The zero-based line value where this token block begins.
+		 */
+		public readonly line: number;
+		/**
+		 * The actual token block encoded data.
+		 * A certain token (at index `i` is encoded using 5 uint32 integers):
+		 *  - at index `5*i`   - `deltaLine`: token line number, relative to `SemanticColoringArea.line`
+		 *  - at index `5*i+1` - `startCharacter`: token start character offset inside the line (inclusive)
+		 *  - at index `5*i+2` - `endCharacter`: token end character offset inside the line (exclusive)
+		 *  - at index `5*i+3` - `tokenType`: will be looked up in `SemanticColoringLegend.tokenTypes`
+		 *  - at index `5*i+4` - `tokenModifiers`: each set bit will be looked up in `SemanticColoringLegend.tokenModifiers`
+		 */
+		public readonly data: Uint32Array;
+
+		constructor(line: number, data: Uint32Array);
+	}
+
+	export class SemanticColoring {
+		public readonly areas: SemanticColoringArea[];
+
+		constructor(areas: SemanticColoringArea[]);
+	}
+
+	/**
+	 * The semantic coloring provider interface defines the contract between extensions and
+	 * semantic coloring.
+	 *
+	 *
+	 */
+	export interface SemanticColoringProvider {
+
+		provideSemanticColoring(document: TextDocument, token: CancellationToken): ProviderResult<SemanticColoring>;
 	}
 
 	export namespace languages {
-
 		/**
-		 * Register a code inset provider.
+		 * Register a semantic coloring provider.
 		 *
+		 * Multiple providers can be registered for a language. In that case providers are sorted
+		 * by their [score](#languages.match) and the best-matching provider is used. Failure
+		 * of the selected provider will cause a failure of the whole operation.
+		 *
+		 * @param selector A selector that defines the documents this provider is applicable to.
+		 * @param provider A semantic coloring provider.
+		 * @return A [disposable](#Disposable) that unregisters this provider when being disposed.
 		 */
-		export function registerCodeInsetProvider(selector: DocumentSelector, provider: CodeInsetProvider): Disposable;
+		export function registerSemanticColoringProvider(selector: DocumentSelector, provider: SemanticColoringProvider, legend: SemanticColoringLegend): Disposable;
 	}
 
 	//#endregion
 
+	// #region Joh - code insets
+
+	export interface WebviewEditorInset {
+		readonly editor: TextEditor;
+		readonly line: number;
+		readonly height: number;
+		readonly webview: Webview;
+		readonly onDidDispose: Event<void>;
+		dispose(): void;
+	}
+
+	export namespace window {
+		export function createWebviewTextEditorInset(editor: TextEditor, line: number, height: number, options?: WebviewOptions): WebviewEditorInset;
+	}
+
+	//#endregion
 
 	//#region Joh - read/write in chunks
 
@@ -474,11 +485,6 @@ declare module 'vscode' {
 
 	export namespace workspace {
 		/**
-		 * DEPRECATED
-		 */
-		export function registerSearchProvider(): Disposable;
-
-		/**
 		 * Register a search provider.
 		 *
 		 * Only one provider can be registered per scheme.
@@ -557,25 +563,17 @@ declare module 'vscode' {
 
 	//#region Joh: decorations
 
-	//todo@joh -> make class
-	export interface DecorationData {
+	export class Decoration {
 		letter?: string;
 		title?: string;
 		color?: ThemeColor;
 		priority?: number;
 		bubble?: boolean;
-		source?: string; // hacky... we should remove it and use equality under the hood
-	}
-
-	export interface SourceControlResourceDecorations {
-		source?: string;
-		letter?: string;
-		color?: ThemeColor;
 	}
 
 	export interface DecorationProvider {
 		onDidChangeDecorations: Event<undefined | Uri | Uri[]>;
-		provideDecoration(uri: Uri, token: CancellationToken): ProviderResult<DecorationData>;
+		provideDecoration(uri: Uri, token: CancellationToken): ProviderResult<Decoration>;
 	}
 
 	export namespace window {
@@ -585,6 +583,29 @@ declare module 'vscode' {
 	//#endregion
 
 	//#region André: debug
+
+	/**
+	 * A DebugSource is an opaque stand-in type for the [Source](https://microsoft.github.io/debug-adapter-protocol/specification#Types_Source) type defined in the Debug Adapter Protocol.
+	 */
+	export interface DebugSource {
+		// Properties: see details [here](https://microsoft.github.io/debug-adapter-protocol/specification#Types_Source).
+	}
+
+	export namespace debug {
+
+		/**
+		 * Converts a "Source" descriptor object received via the Debug Adapter Protocol into a Uri that can be used to load its contents.
+		 * If the source descriptor is based on a path, a file Uri is returned.
+		 * If the source descriptor uses a reference number, a specific debug Uri (scheme 'debug') is constructed that requires a corresponding VS Code ContentProvider and a running debug session
+		 *
+		 * If the "Source" descriptor has insufficient information for creating the Uri, an error is thrown.
+		 *
+		 * @param source An object conforming to the [Source](https://microsoft.github.io/debug-adapter-protocol/specification#Types_Source) type defined in the Debug Adapter Protocol.
+		 * @param session An optional debug session that will be used when the source descriptor uses a reference number to load the contents from an active debug session.
+		 * @return A uri that can be used to load the contents of the source.
+		 */
+		export function asDebugSourceUri(source: DebugSource, session?: DebugSession): Uri;
+	}
 
 	// deprecated
 
@@ -623,11 +644,6 @@ declare module 'vscode' {
 		 * An [event](#Event) that fires when the log level has changed.
 		 */
 		export const onDidChangeLogLevel: Event<LogLevel>;
-
-		/**
-		 * The custom uri scheme the editor registers to in the operating system, like 'vscode', 'vscode-insiders'.
-		 */
-		export const uriScheme: string;
 	}
 
 	//#endregion
@@ -714,380 +730,6 @@ declare module 'vscode' {
 
 	//#endregion
 
-	//#region Comments
-	/**
-	 * Comments provider related APIs are still in early stages, they may be changed significantly during our API experiments.
-	 */
-
-	interface CommentInfo {
-		/**
-		 * All of the comment threads associated with the document.
-		 */
-		threads: CommentThread[];
-
-		/**
-		 * The ranges of the document which support commenting.
-		 */
-		commentingRanges?: Range[];
-
-		/**
-		 * If it's in draft mode or not
-		 */
-		inDraftMode?: boolean;
-	}
-
-	export enum CommentThreadCollapsibleState {
-		/**
-		 * Determines an item is collapsed
-		 */
-		Collapsed = 0,
-		/**
-		 * Determines an item is expanded
-		 */
-		Expanded = 1
-	}
-
-	/**
-	 * A collection of comments representing a conversation at a particular range in a document.
-	 */
-	export interface CommentThread {
-		/**
-		 * A unique identifier of the comment thread.
-		 */
-		threadId: string;
-
-		/**
-		 * The uri of the document the thread has been created on.
-		 */
-		resource: Uri;
-
-		/**
-		 * The range the comment thread is located within the document. The thread icon will be shown
-		 * at the first line of the range.
-		 */
-		range: Range;
-
-		/**
-		 * The human-readable label describing the [Comment Thread](#CommentThread)
-		 */
-		label?: string;
-
-		/**
-		 * The ordered comments of the thread.
-		 */
-		comments: Comment[];
-
-		/**
-		 * Optional accept input command
-		 *
-		 * `acceptInputCommand` is the default action rendered on Comment Widget, which is always placed rightmost.
-		 * This command will be invoked when users the user accepts the value in the comment editor.
-		 * This command will disabled when the comment editor is empty.
-		 */
-		acceptInputCommand?: Command;
-
-		/**
-		 * Optional additonal commands.
-		 *
-		 * `additionalCommands` are the secondary actions rendered on Comment Widget.
-		 */
-		additionalCommands?: Command[];
-
-		/**
-		 * Whether the thread should be collapsed or expanded when opening the document.
-		 * Defaults to Collapsed.
-		 */
-		collapsibleState?: CommentThreadCollapsibleState;
-
-		/**
-		 * The command to be executed when users try to delete the comment thread. Currently, this is only called
-		 * when the user collapses a comment thread that has no comments in it.
-		 */
-		deleteCommand?: Command;
-
-		/**
-		 * Dispose this comment thread.
-		 * Once disposed, the comment thread will be removed from visible text editors and Comments Panel.
-		 */
-		dispose?(): void;
-	}
-
-	/**
-	 * A comment is displayed within the editor or the Comments Panel, depending on how it is provided.
-	 */
-	export interface Comment {
-		/**
-		 * The id of the comment
-		 */
-		commentId: string;
-
-		/**
-		 * The text of the comment
-		 */
-		body: MarkdownString;
-
-		/**
-		 * Optional label describing the [Comment](#Comment)
-		 * Label will be rendered next to userName if exists.
-		 */
-		label?: string;
-
-		/**
-		 * The display name of the user who created the comment
-		 */
-		userName: string;
-
-		/**
-		 * The icon path for the user who created the comment
-		 */
-		userIconPath?: Uri;
-
-		/**
-		 * @deprecated Use userIconPath instead. The avatar src of the user who created the comment
-		 */
-		gravatar?: string;
-
-		/**
-		 * Whether the current user has permission to edit the comment.
-		 *
-		 * This will be treated as false if the comment is provided by a `WorkspaceCommentProvider`, or
-		 * if it is provided by a `DocumentCommentProvider` and  no `editComment` method is given.
-		 *
-		 * DEPRECATED, use editCommand
-		 */
-		canEdit?: boolean;
-
-		/**
-		 * Whether the current user has permission to delete the comment.
-		 *
-		 * This will be treated as false if the comment is provided by a `WorkspaceCommentProvider`, or
-		 * if it is provided by a `DocumentCommentProvider` and  no `deleteComment` method is given.
-		 *
-		 * DEPRECATED, use deleteCommand
-		 */
-		canDelete?: boolean;
-
-		/**
-		 * @deprecated
-		 * The command to be executed if the comment is selected in the Comments Panel
-		 */
-		command?: Command;
-
-		/**
-		 * The command to be executed if the comment is selected in the Comments Panel
-		 */
-		selectCommand?: Command;
-
-		/**
-		 * The command to be executed when users try to save the edits to the comment
-		 */
-		editCommand?: Command;
-
-		/**
-		 * The command to be executed when users try to delete the comment
-		 */
-		deleteCommand?: Command;
-
-		/**
-		 * Deprecated
-		 */
-		isDraft?: boolean;
-
-		/**
-		 * Proposed Comment Reaction
-		 */
-		commentReactions?: CommentReaction[];
-	}
-
-	/**
-	 * Deprecated
-	 */
-	export interface CommentThreadChangedEvent {
-		/**
-		 * Added comment threads.
-		 */
-		readonly added: CommentThread[];
-
-		/**
-		 * Removed comment threads.
-		 */
-		readonly removed: CommentThread[];
-
-		/**
-		 * Changed comment threads.
-		 */
-		readonly changed: CommentThread[];
-
-		/**
-		 * Changed draft mode
-		 */
-		readonly inDraftMode: boolean;
-	}
-
-	/**
-	 * Comment Reactions
-	 */
-	interface CommentReaction {
-		readonly label?: string;
-		readonly iconPath?: string | Uri;
-		count?: number;
-		readonly hasReacted?: boolean;
-	}
-
-	/**
-	 * DEPRECATED
-	 */
-	interface DocumentCommentProvider {
-		/**
-		 * Provide the commenting ranges and comment threads for the given document. The comments are displayed within the editor.
-		 */
-		provideDocumentComments(document: TextDocument, token: CancellationToken): Promise<CommentInfo>;
-
-		/**
-		 * Called when a user adds a new comment thread in the document at the specified range, with body text.
-		 */
-		createNewCommentThread(document: TextDocument, range: Range, text: string, token: CancellationToken): Promise<CommentThread>;
-
-		/**
-		 * Called when a user replies to a new comment thread in the document at the specified range, with body text.
-		 */
-		replyToCommentThread(document: TextDocument, range: Range, commentThread: CommentThread, text: string, token: CancellationToken): Promise<CommentThread>;
-
-		/**
-		 * Called when a user edits the comment body to the be new text.
-		 */
-		editComment?(document: TextDocument, comment: Comment, text: string, token: CancellationToken): Promise<void>;
-
-		/**
-		 * Called when a user deletes the comment.
-		 */
-		deleteComment?(document: TextDocument, comment: Comment, token: CancellationToken): Promise<void>;
-
-		startDraft?(document: TextDocument, token: CancellationToken): Promise<void>;
-		deleteDraft?(document: TextDocument, token: CancellationToken): Promise<void>;
-		finishDraft?(document: TextDocument, token: CancellationToken): Promise<void>;
-
-		startDraftLabel?: string;
-		deleteDraftLabel?: string;
-		finishDraftLabel?: string;
-
-		addReaction?(document: TextDocument, comment: Comment, reaction: CommentReaction): Promise<void>;
-		deleteReaction?(document: TextDocument, comment: Comment, reaction: CommentReaction): Promise<void>;
-		reactionGroup?: CommentReaction[];
-
-		/**
-		 * Notify of updates to comment threads.
-		 */
-		onDidChangeCommentThreads: Event<CommentThreadChangedEvent>;
-	}
-
-	/**
-	 * DEPRECATED
-	 */
-	interface WorkspaceCommentProvider {
-		/**
-		 * Provide all comments for the workspace. Comments are shown within the comments panel. Selecting a comment
-		 * from the panel runs the comment's command.
-		 */
-		provideWorkspaceComments(token: CancellationToken): Promise<CommentThread[]>;
-
-		/**
-		 * Notify of updates to comment threads.
-		 */
-		onDidChangeCommentThreads: Event<CommentThreadChangedEvent>;
-	}
-
-	/**
-	 * The comment input box in Comment Widget.
-	 */
-	export interface CommentInputBox {
-		/**
-		 * Setter and getter for the contents of the comment input box.
-		 */
-		value: string;
-	}
-
-	export interface CommentReactionProvider {
-		availableReactions: CommentReaction[];
-		toggleReaction?(document: TextDocument, comment: Comment, reaction: CommentReaction): Promise<void>;
-	}
-
-	export interface CommentingRangeProvider {
-		/**
-		 * Provide a list of ranges which allow new comment threads creation or null for a given document
-		 */
-		provideCommentingRanges(document: TextDocument, token: CancellationToken): ProviderResult<Range[]>;
-	}
-
-	export interface EmptyCommentThreadFactory {
-		/**
-		 * The method `createEmptyCommentThread` is called when users attempt to create new comment thread from the gutter or command palette.
-		 * Extensions still need to call `createCommentThread` inside this call when appropriate.
-		 */
-		createEmptyCommentThread(document: TextDocument, range: Range): ProviderResult<void>;
-	}
-
-	export interface CommentController {
-		/**
-		 * The id of this comment controller.
-		 */
-		readonly id: string;
-
-		/**
-		 * The human-readable label of this comment controller.
-		 */
-		readonly label: string;
-
-		/**
-		 * The active (focused) [comment input box](#CommentInputBox).
-		 */
-		readonly inputBox?: CommentInputBox;
-
-		/**
-		 * Create a [CommentThread](#CommentThread)
-		 */
-		createCommentThread(id: string, resource: Uri, range: Range, comments: Comment[]): CommentThread;
-
-		/**
-		 * Optional commenting range provider.
-		 * Provide a list [ranges](#Range) which support commenting to any given resource uri.
-		 */
-		commentingRangeProvider?: CommentingRangeProvider;
-
-		/**
-		 * Optional new comment thread factory.
-		 */
-		emptyCommentThreadFactory?: EmptyCommentThreadFactory;
-
-		/**
-		 * Optional reaction provider
-		 */
-		reactionProvider?: CommentReactionProvider;
-
-		/**
-		 * Dispose this comment controller.
-		 */
-		dispose(): void;
-	}
-
-	namespace comment {
-		export function createCommentController(id: string, label: string): CommentController;
-	}
-
-	namespace workspace {
-		/**
-		 * DEPRECATED
-		 * Use vscode.comment.createCommentController instead.
-		 */
-		export function registerDocumentCommentProvider(provider: DocumentCommentProvider): Disposable;
-		/**
-		 * DEPRECATED
-		 * Use vscode.comment.createCommentController instead and we don't differentiate document comments and workspace comments anymore.
-		 */
-		export function registerWorkspaceCommentProvider(provider: WorkspaceCommentProvider): Disposable;
-	}
-
-	//#endregion
 
 	//#region Terminal
 
@@ -1105,14 +747,50 @@ declare module 'vscode' {
 		readonly dimensions: TerminalDimensions;
 	}
 
+	export interface TerminalDataWriteEvent {
+		/**
+		 * The [terminal](#Terminal) for which the data was written.
+		 */
+		readonly terminal: Terminal;
+		/**
+		 * The data being written.
+		 */
+		readonly data: string;
+	}
+
+	export interface TerminalExitStatus {
+		/**
+		 * The exit code that a terminal exited with, it can have the following values:
+		 * - Zero: the terminal process or custom execution succeeded.
+		 * - Non-zero: the terminal process or custom execution failed.
+		 * - `undefined`: the user forcefully closed the terminal or a custom execution exited
+		 *   without providing an exit code.
+		 */
+		readonly code: number | undefined;
+	}
+
 	namespace window {
 		/**
 		 * An event which fires when the [dimensions](#Terminal.dimensions) of the terminal change.
 		 */
 		export const onDidChangeTerminalDimensions: Event<TerminalDimensionsChangeEvent>;
+
+		/**
+		 * An event which fires when the terminal's pty slave pseudo-device is written to. In other
+		 * words, this provides access to the raw data stream from the process running within the
+		 * terminal, including VT sequences.
+		 */
+		export const onDidWriteTerminalData: Event<TerminalDataWriteEvent>;
 	}
 
 	export interface Terminal {
+		/**
+		 * The object used to initialize the terminal, this is useful for things like detecting the
+		 * shell type of shells not launched by the extension or detecting what folder the shell was
+		 * launched in.
+		 */
+		readonly creationOptions: Readonly<TerminalOptions | ExtensionTerminalOptions>;
+
 		/**
 		 * The current dimensions of the terminal. This will be `undefined` immediately after the
 		 * terminal is created as the dimensions are not known until shortly after the terminal is
@@ -1121,132 +799,19 @@ declare module 'vscode' {
 		readonly dimensions: TerminalDimensions | undefined;
 
 		/**
-		 * Fires when the terminal's pty slave pseudo-device is written to. In other words, this
-		 * provides access to the raw data stream from the process running within the terminal,
-		 * including VT sequences.
-		 */
-		readonly onDidWriteData: Event<string>;
-	}
-
-	/**
-	 * Represents the dimensions of a terminal.
-	 */
-	export interface TerminalDimensions {
-		/**
-		 * The number of columns in the terminal.
-		 */
-		readonly columns: number;
-
-		/**
-		 * The number of rows in the terminal.
-		 */
-		readonly rows: number;
-	}
-
-	/**
-	 * Represents a terminal without a process where all interaction and output in the terminal is
-	 * controlled by an extension. This is similar to an output window but has the same VT sequence
-	 * compatibility as the regular terminal.
-	 *
-	 * Note that an instance of [Terminal](#Terminal) will be created when a TerminalRenderer is
-	 * created with all its APIs available for use by extensions. When using the Terminal object
-	 * of a TerminalRenderer it acts just like normal only the extension that created the
-	 * TerminalRenderer essentially acts as a process. For example when an
-	 * [Terminal.onDidWriteData](#Terminal.onDidWriteData) listener is registered, that will fire
-	 * when [TerminalRenderer.write](#TerminalRenderer.write) is called. Similarly when
-	 * [Terminal.sendText](#Terminal.sendText) is triggered that will fire the
-	 * [TerminalRenderer.onDidAcceptInput](#TerminalRenderer.onDidAcceptInput) event.
-	 *
-	 * **Example:** Create a terminal renderer, show it and write hello world in red
-	 * ```typescript
-	 * const renderer = window.createTerminalRenderer('foo');
-	 * renderer.terminal.then(t => t.show());
-	 * renderer.write('\x1b[31mHello world\x1b[0m');
-	 * ```
-	 */
-	export interface TerminalRenderer {
-		/**
-		 * The name of the terminal, this will appear in the terminal selector.
-		 */
-		name: string;
-
-		/**
-		 * The dimensions of the terminal, the rows and columns of the terminal can only be set to
-		 * a value smaller than the maximum value, if this is undefined the terminal will auto fit
-		 * to the maximum value [maximumDimensions](TerminalRenderer.maximumDimensions).
+		 * The exit status of the terminal, this will be undefined while the terminal is active.
 		 *
-		 * **Example:** Override the dimensions of a TerminalRenderer to 20 columns and 10 rows
+		 * **Example:** Show a notification with the exit code when the terminal exits with a
+		 * non-zero exit code.
 		 * ```typescript
-		 * terminalRenderer.dimensions = {
-		 *   cols: 20,
-		 *   rows: 10
-		 * };
-		 * ```
-		 */
-		dimensions: TerminalDimensions | undefined;
-
-		/**
-		 * The maximum dimensions of the terminal, this will be undefined immediately after a
-		 * terminal renderer is created and also until the terminal becomes visible in the UI.
-		 * Listen to [onDidChangeMaximumDimensions](TerminalRenderer.onDidChangeMaximumDimensions)
-		 * to get notified when this value changes.
-		 */
-		readonly maximumDimensions: TerminalDimensions | undefined;
-
-		/**
-		 * The corresponding [Terminal](#Terminal) for this TerminalRenderer.
-		 */
-		readonly terminal: Terminal;
-
-		/**
-		 * Write text to the terminal. Unlike [Terminal.sendText](#Terminal.sendText) which sends
-		 * text to the underlying _process_, this will write the text to the terminal itself.
-		 *
-		 * **Example:** Write red text to the terminal
-		 * ```typescript
-		 * terminalRenderer.write('\x1b[31mHello world\x1b[0m');
-		 * ```
-		 *
-		 * **Example:** Move the cursor to the 10th row and 20th column and write an asterisk
-		 * ```typescript
-		 * terminalRenderer.write('\x1b[10;20H*');
-		 * ```
-		 *
-		 * @param text The text to write.
-		 */
-		write(text: string): void;
-
-		/**
-		 * An event which fires on keystrokes in the terminal or when an extension calls
-		 * [Terminal.sendText](#Terminal.sendText). Keystrokes are converted into their
-		 * corresponding VT sequence representation.
-		 *
-		 * **Example:** Simulate interaction with the terminal from an outside extension or a
-		 * workbench command such as `workbench.action.terminal.runSelectedText`
-		 * ```typescript
-		 * const terminalRenderer = window.createTerminalRenderer('test');
-		 * terminalRenderer.onDidAcceptInput(data => {
-		 *   console.log(data); // 'Hello world'
+		 * window.onDidCloseTerminal(t => {
+		 *   if (t.exitStatus && t.exitStatus.code) {
+		 *   	vscode.window.showInformationMessage(`Exit code: ${t.exitStatus.code}`);
+		 *   }
 		 * });
-		 * terminalRenderer.terminal.sendText('Hello world');
 		 * ```
 		 */
-		readonly onDidAcceptInput: Event<string>;
-
-		/**
-		 * An event which fires when the [maximum dimensions](#TerminalRenderer.maximumDimensions) of
-		 * the terminal renderer change.
-		 */
-		readonly onDidChangeMaximumDimensions: Event<TerminalDimensions>;
-	}
-
-	export namespace window {
-		/**
-		 * Create a [TerminalRenderer](#TerminalRenderer).
-		 *
-		 * @param name The name of the terminal renderer, this shows up in the terminal selector.
-		 */
-		export function createTerminalRenderer(name: string): TerminalRenderer;
+		readonly exitStatus: TerminalExitStatus | undefined;
 	}
 
 	//#endregion
@@ -1260,20 +825,243 @@ declare module 'vscode' {
 	//#endregion
 
 	//#region mjbvz,joh: https://github.com/Microsoft/vscode/issues/43768
-	export interface FileRenameEvent {
-		readonly oldUri: Uri;
-		readonly newUri: Uri;
+
+	/**
+	 * An event that is fired when files are going to be created.
+	 *
+	 * To make modifications to the workspace before the files are created,
+	 * call the [`waitUntil](#FileWillCreateEvent.waitUntil)-function with a
+	 * thenable that resolves to a [workspace edit](#WorkspaceEdit).
+	 */
+	export interface FileWillCreateEvent {
+
+		/**
+		 * The files that are going to be created.
+		 */
+		readonly files: ReadonlyArray<Uri>;
+
+		/**
+		 * Allows to pause the event and to apply a [workspace edit](#WorkspaceEdit).
+		 *
+		 * *Note:* This function can only be called during event dispatch and not
+		 * in an asynchronous manner:
+		 *
+		 * ```ts
+		 * workspace.onWillCreateFiles(event => {
+		 * 	// async, will *throw* an error
+		 * 	setTimeout(() => event.waitUntil(promise));
+		 *
+		 * 	// sync, OK
+		 * 	event.waitUntil(promise);
+		 * })
+		 * ```
+		 *
+		 * @param thenable A thenable that delays saving.
+		 */
+		waitUntil(thenable: Thenable<WorkspaceEdit>): void;
+
+		/**
+		 * Allows to pause the event until the provided thenable resolves.
+		 *
+		 * *Note:* This function can only be called during event dispatch.
+		 *
+		 * @param thenable A thenable that delays saving.
+		 */
+		waitUntil(thenable: Thenable<any>): void;
 	}
 
-	export interface FileWillRenameEvent {
-		readonly oldUri: Uri;
-		readonly newUri: Uri;
+	/**
+	 * An event that is fired after files are created.
+	 */
+	export interface FileCreateEvent {
+
+		/**
+		 * The files that got created.
+		 */
+		readonly files: ReadonlyArray<Uri>;
+	}
+
+	/**
+	 * An event that is fired when files are going to be deleted.
+	 *
+	 * To make modifications to the workspace before the files are deleted,
+	 * call the [`waitUntil](#FileWillCreateEvent.waitUntil)-function with a
+	 * thenable that resolves to a [workspace edit](#WorkspaceEdit).
+	 */
+	export interface FileWillDeleteEvent {
+
+		/**
+		 * The files that are going to be deleted.
+		 */
+		readonly files: ReadonlyArray<Uri>;
+
+		/**
+		 * Allows to pause the event and to apply a [workspace edit](#WorkspaceEdit).
+		 *
+		 * *Note:* This function can only be called during event dispatch and not
+		 * in an asynchronous manner:
+		 *
+		 * ```ts
+		 * workspace.onWillCreateFiles(event => {
+		 * 	// async, will *throw* an error
+		 * 	setTimeout(() => event.waitUntil(promise));
+		 *
+		 * 	// sync, OK
+		 * 	event.waitUntil(promise);
+		 * })
+		 * ```
+		 *
+		 * @param thenable A thenable that delays saving.
+		 */
 		waitUntil(thenable: Thenable<WorkspaceEdit>): void;
+
+		/**
+		 * Allows to pause the event until the provided thenable resolves.
+		 *
+		 * *Note:* This function can only be called during event dispatch.
+		 *
+		 * @param thenable A thenable that delays saving.
+		 */
+		waitUntil(thenable: Thenable<any>): void;
+	}
+
+	/**
+	 * An event that is fired after files are deleted.
+	 */
+	export interface FileDeleteEvent {
+
+		/**
+		 * The files that got deleted.
+		 */
+		readonly files: ReadonlyArray<Uri>;
+	}
+
+	/**
+	 * An event that is fired when files are going to be renamed.
+	 *
+	 * To make modifications to the workspace before the files are renamed,
+	 * call the [`waitUntil](#FileWillCreateEvent.waitUntil)-function with a
+	 * thenable that resolves to a [workspace edit](#WorkspaceEdit).
+	 */
+	export interface FileWillRenameEvent {
+
+		/**
+		 * The files that are going to be renamed.
+		 */
+		readonly files: ReadonlyArray<{ oldUri: Uri, newUri: Uri }>;
+
+		/**
+		 * Allows to pause the event and to apply a [workspace edit](#WorkspaceEdit).
+		 *
+		 * *Note:* This function can only be called during event dispatch and not
+		 * in an asynchronous manner:
+		 *
+		 * ```ts
+		 * workspace.onWillCreateFiles(event => {
+		 * 	// async, will *throw* an error
+		 * 	setTimeout(() => event.waitUntil(promise));
+		 *
+		 * 	// sync, OK
+		 * 	event.waitUntil(promise);
+		 * })
+		 * ```
+		 *
+		 * @param thenable A thenable that delays saving.
+		 */
+		waitUntil(thenable: Thenable<WorkspaceEdit>): void;
+
+		/**
+		 * Allows to pause the event until the provided thenable resolves.
+		 *
+		 * *Note:* This function can only be called during event dispatch.
+		 *
+		 * @param thenable A thenable that delays saving.
+		 */
+		waitUntil(thenable: Thenable<any>): void;
+	}
+
+	/**
+	 * An event that is fired after files are renamed.
+	 */
+	export interface FileRenameEvent {
+
+		/**
+		 * The files that got renamed.
+		 */
+		readonly files: ReadonlyArray<{ oldUri: Uri, newUri: Uri }>;
 	}
 
 	export namespace workspace {
-		export const onWillRenameFile: Event<FileWillRenameEvent>;
-		export const onDidRenameFile: Event<FileRenameEvent>;
+
+		/**
+		 * An event that is emitted when files are being created.
+		 *
+		 * *Note 1:* This event is triggered by user gestures, like creating a file from the
+		 * explorer, or from the [`workspace.applyEdit`](#workspace.applyEdit)-api. This event is *not* fired when
+		 * files change on disk, e.g triggered by another application, or when using the
+		 * [`workspace.fs`](#FileSystem)-api.
+		 *
+		 * *Note 2:* When this event is fired, edits to files thare are being created cannot be applied.
+		 */
+		export const onWillCreateFiles: Event<FileWillCreateEvent>;
+
+		/**
+		 * An event that is emitted when files have been created.
+		 *
+		 * *Note:* This event is triggered by user gestures, like creating a file from the
+		 * explorer, or from the [`workspace.applyEdit`](#workspace.applyEdit)-api, but this event is *not* fired when
+		 * files change on disk, e.g triggered by another application, or when using the
+		 * [`workspace.fs`](#FileSystem)-api.
+		 */
+		export const onDidCreateFiles: Event<FileCreateEvent>;
+
+		/**
+		 * An event that is emitted when files are being deleted.
+		 *
+		 * *Note 1:* This event is triggered by user gestures, like deleting a file from the
+		 * explorer, or from the [`workspace.applyEdit`](#workspace.applyEdit)-api, but this event is *not* fired when
+		 * files change on disk, e.g triggered by another application, or when using the
+		 * [`workspace.fs`](#FileSystem)-api.
+		 *
+		 * *Note 2:* When deleting a folder with children only one event is fired.
+		 */
+		export const onWillDeleteFiles: Event<FileWillDeleteEvent>;
+
+		/**
+		 * An event that is emitted when files have been deleted.
+		 *
+		 * *Note 1:* This event is triggered by user gestures, like deleting a file from the
+		 * explorer, or from the [`workspace.applyEdit`](#workspace.applyEdit)-api, but this event is *not* fired when
+		 * files change on disk, e.g triggered by another application, or when using the
+		 * [`workspace.fs`](#FileSystem)-api.
+		 *
+		 * *Note 2:* When deleting a folder with children only one event is fired.
+		 */
+		export const onDidDeleteFiles: Event<FileDeleteEvent>;
+
+		/**
+		 * An event that is emitted when files are being renamed.
+		 *
+		 * *Note 1:* This event is triggered by user gestures, like renaming a file from the
+		 * explorer, and from the [`workspace.applyEdit`](#workspace.applyEdit)-api, but this event is *not* fired when
+		 * files change on disk, e.g triggered by another application, or when using the
+		 * [`workspace.fs`](#FileSystem)-api.
+		 *
+		 * *Note 2:* When renaming a folder with children only one event is fired.
+		 */
+		export const onWillRenameFiles: Event<FileWillRenameEvent>;
+
+		/**
+		 * An event that is emitted when files have been renamed.
+		 *
+		 * *Note 1:* This event is triggered by user gestures, like renaming a file from the
+		 * explorer, and from the [`workspace.applyEdit`](#workspace.applyEdit)-api, but this event is *not* fired when
+		 * files change on disk, e.g triggered by another application, or when using the
+		 * [`workspace.fs`](#FileSystem)-api.
+		 *
+		 * *Note 2:* When renaming a folder with children only one event is fired.
+		 */
+		export const onDidRenameFiles: Event<FileRenameEvent>;
 	}
 	//#endregion
 
@@ -1287,15 +1075,6 @@ declare module 'vscode' {
 	//#endregion
 
 	//#region Tree View
-
-	export interface TreeView<T> {
-
-		/**
-		 * An optional human-readable message that will be rendered in the view.
-		 */
-		message?: string | MarkdownString;
-
-	}
 
 	/**
 	 * Label describing the [Tree item](#TreeItem)
@@ -1329,49 +1108,28 @@ declare module 'vscode' {
 	}
 	//#endregion
 
-	/**
-	 * Class used to execute an extension callback as a task.
-	 */
-	export class CustomExecution {
-		/**
-		 * @param callback The callback that will be called when the extension callback task is executed.
-		 */
-		constructor(callback: (terminalRenderer: TerminalRenderer, cancellationToken: CancellationToken, thisArg?: any) => Thenable<number>);
+	//#region CustomExecution
 
-		/**
-		 * The callback used to execute the task.
-		 * @param terminalRenderer Used by the task to render output and receive input.
-		 * @param cancellationToken Cancellation used to signal a cancel request to the executing task.
-		 * @returns The callback should return '0' for success and a non-zero value for failure.
-		 */
-		callback: (terminalRenderer: TerminalRenderer, cancellationToken: CancellationToken, thisArg?: any) => Thenable<number>;
-	}
 
 	/**
 	 * A task to execute
 	 */
 	export class Task2 extends Task {
-		/**
-		 * Creates a new task.
-		 *
-		 * @param definition The task definition as defined in the taskDefinitions extension point.
-		 * @param scope Specifies the task's scope. It is either a global or a workspace task or a task for a specific workspace folder.
-		 * @param name The task's name. Is presented in the user interface.
-		 * @param source The task's source (e.g. 'gulp', 'npm', ...). Is presented in the user interface.
-		 * @param execution The process or shell execution.
-		 * @param problemMatchers the names of problem matchers to use, like '$tsc'
-		 *  or '$eslint'. Problem matchers can be contributed by an extension using
-		 *  the `problemMatchers` extension point.
-		 */
-		constructor(taskDefinition: TaskDefinition, scope: WorkspaceFolder | TaskScope.Global | TaskScope.Workspace, name: string, source: string, execution?: ProcessExecution | ShellExecution | CustomExecution, problemMatchers?: string | string[]);
-
-		/**
-		 * The task's execution engine
-		 */
-		execution2?: ProcessExecution | ShellExecution | CustomExecution;
+		detail?: string;
 	}
 
-	//#region Tasks
+	export class CustomExecution2 extends CustomExecution {
+		/**
+		 * Constructs a CustomExecution task object. The callback will be executed the task is run, at which point the
+		 * extension should return the Pseudoterminal it will "run in". The task should wait to do further execution until
+		 * [Pseudoterminal.open](#Pseudoterminal.open) is called. Task cancellation should be handled using
+		 * [Pseudoterminal.close](#Pseudoterminal.close). When the task is complete fire
+		 * [Pseudoterminal.onDidClose](#Pseudoterminal.onDidClose).
+		 * @param callback The callback that will be called when the task is started by a user.
+		 */
+		constructor(callback: (resolvedDefinition?: TaskDefinition) => Thenable<Pseudoterminal>);
+	}
+
 	export interface TaskPresentationOptions {
 		/**
 		 * Controls whether the task is executed in a specific terminal group using split panes.
@@ -1380,34 +1138,234 @@ declare module 'vscode' {
 	}
 	//#endregion
 
-	//#region Webview Port mapping— mjbvz
+	// #region Ben - status bar item with ID and Name
+
+	export namespace window {
+
+		/**
+		 * Options to configure the status bar item.
+		 */
+		export interface StatusBarItemOptions {
+
+			/**
+			 * A unique identifier of the status bar item. The identifier
+			 * is for example used to allow a user to show or hide the
+			 * status bar item in the UI.
+			 */
+			id: string;
+
+			/**
+			 * A human readable name of the status bar item. The name is
+			 * for example used as a label in the UI to show or hide the
+			 * status bar item.
+			 */
+			name: string;
+
+			/**
+			 * The alignment of the status bar item.
+			 */
+			alignment?: StatusBarAlignment;
+
+			/**
+			 * The priority of the status bar item. Higher value means the item should
+			 * be shown more to the left.
+			 */
+			priority?: number;
+		}
+
+		/**
+		 * Creates a status bar [item](#StatusBarItem).
+		 *
+		 * @param options The options of the item. If not provided, some default values
+		 * will be assumed. For example, the `StatusBarItemOptions.id` will be the id
+		 * of the extension and the `StatusBarItemOptions.name` will be the extension name.
+		 * @return A new status bar item.
+		 */
+		export function createStatusBarItem(options?: StatusBarItemOptions): StatusBarItem;
+	}
+
+	//#endregion
+
+	// #region Ben - extension auth flow (desktop+web)
+
+	export interface AppUriOptions {
+		payload?: {
+			path?: string;
+			query?: string;
+			fragment?: string;
+		};
+	}
+
+	export namespace env {
+
+		/**
+		 * @deprecated use `vscode.env.asExternalUri` instead.
+		 */
+		export function createAppUri(options?: AppUriOptions): Thenable<Uri>;
+	}
+
+	//#endregion
+
+	//#region Custom editors, mjbvz
+
 	/**
-	 * Defines a port mapping used for localhost inside the webview.
+	 * Defines how a webview editor interacts with VS Code.
 	 */
-	export interface WebviewPortMapping {
+	interface WebviewEditorCapabilities {
 		/**
-		 * Localhost port to remap inside the webview.
+		 * Invoked when the resource has been renamed in VS Code.
+		 *
+		 * This is called when the resource's new name also matches the custom editor selector.
+		 *
+		 * If this is not implemented—or if the new resource name does not match the existing selector—then VS Code
+		 * will close and reopen the editor on  rename.
+		 *
+		 * @param newResource Full path to the resource.
+		 *
+		 * @return Thenable that signals the save is complete.
 		 */
-		readonly port: number;
+		// rename?(newResource: Uri): Thenable<void>;
 
 		/**
-		 * Destination port. The `port` is resolved to this port.
+		 * Controls the editing functionality of a webview editor. This allows the webview editor to hook into standard
+		 * editor events such as `undo` or `save`.
+		 *
+		 * WebviewEditors that do not have `editingCapability` are considered to be readonly. Users can still interact
+		 * with readonly editors, but these editors will not integrate with VS Code's standard editor functionality.
 		 */
-		readonly resolvedPort: number;
+		readonly editingCapability?: WebviewEditorEditingCapability;
 	}
 
-	export interface WebviewOptions {
+	/**
+	 * Defines the editing functionality of a webview editor. This allows the webview editor to hook into standard
+	 * editor events such as `undo` or `save`.
+	 */
+	interface WebviewEditorEditingCapability {
 		/**
-		 * Mappings of localhost ports used inside the webview.
+		 * Persist the resource.
 		 *
-		 * Port mapping allow webviews to transparently define how localhost ports are resolved. This can be used
-		 * to allow using a static localhost port inside the webview that is resolved to random port that a service is
-		 * running on.
+		 * Extensions should persist the resource
 		 *
-		 * If a webview accesses localhost content, we recomend that you specify port mappings even if
-		 * the `port` and `resolvedPort` ports are the same.
+		 * @return Thenable signaling that the save has completed.
 		 */
-		readonly portMapping?: ReadonlyArray<WebviewPortMapping>;
+		save(): Thenable<void>;
+
+		/**
+		 *
+		 * @param resource Resource being saved.
+		 * @param targetResource Location to save to.
+		 */
+		saveAs(resource: Uri, targetResource: Uri): Thenable<void>;
+
+		/**
+		 * Event triggered by extensions to signal to VS Code that an edit has occurred.
+		 *
+		 * The edit must be a json serializable object.
+		 */
+		readonly onEdit: Event<any>;
+
+		/**
+		 * Apply a set of edits.
+		 *
+		 * This is triggered on redo and when restoring a custom editor after restart. Note that is not invoked
+		 * when `onEdit` is called as `onEdit` implies also updating the view to reflect the edit.
+		 *
+		 * @param edit Array of edits. Sorted from oldest to most recent.
+		 */
+		applyEdits(edits: readonly any[]): Thenable<void>;
+
+		/**
+		 * Undo a set of edits.
+		 *
+		 * This is triggered when a user undoes an edit or when revert is called on a file.
+		 *
+		 * @param edit Array of edits. Sorted from most recent to oldest.
+		 */
+		undoEdits(edits: readonly any[]): Thenable<void>;
 	}
+
+	export interface WebviewEditorProvider {
+		/**
+		 * Resolve a webview editor for a given resource.
+		 *
+		 * To resolve a webview editor, a provider must fill in its initial html content and hook up all
+		 * the event listeners it is interested it. The provider should also take ownership of the passed in `WebviewPanel`.
+		 *
+		 * @param input Information about the resource being resolved.
+		 * @param webview Webview being resolved. The provider should take ownership of this webview.
+		 *
+		 * @return Thenable to a `WebviewEditorCapabilities` indicating that the webview editor has been resolved.
+		 *   The `WebviewEditorCapabilities` defines how the custom editor interacts with VS Code.
+		 */
+		resolveWebviewEditor(
+			input: {
+				readonly resource: Uri
+			},
+			webview: WebviewPanel,
+		): Thenable<WebviewEditorCapabilities>;
+	}
+
+	namespace window {
+		/**
+		 * Register a new provider for webview editors of a given type.
+		 *
+		 * @param viewType  Type of the webview editor provider.
+		 * @param provider Resolves webview editors.
+		 * @param options Content settings for a webview panels the provider is given.
+		 *
+		 * @return Disposable that unregisters the `WebviewEditorProvider`.
+		 */
+		export function registerWebviewEditorProvider(
+			viewType: string,
+			provider: WebviewEditorProvider,
+			options?: WebviewPanelOptions,
+		): Disposable;
+	}
+
+	//#endregion
+
+	//#region joh, insert/replace completions: https://github.com/microsoft/vscode/issues/10266
+
+	export interface CompletionItem {
+
+		/**
+		 * A range or a insert and replace range selecting the text that should be replaced by this completion item.
+		 *
+		 * When omitted, the range of the [current word](#TextDocument.getWordRangeAtPosition) is used as replace-range
+		 * and as insert-range the start of the [current word](#TextDocument.getWordRangeAtPosition) to the
+		 * current position is used.
+		 *
+		 * *Note 1:* A range must be a [single line](#Range.isSingleLine) and it must
+		 * [contain](#Range.contains) the position at which completion has been [requested](#CompletionItemProvider.provideCompletionItems).
+		 * *Note 2:* A insert range must be a prefix of a replace range, that means it must be contained and starting at the same position.
+		 */
+		range2?: Range | { inserting: Range; replacing: Range; };
+	}
+
+	//#endregion
+
+	//#region chrmarti, pelmers - allow QuickPicks to skip sorting: https://github.com/microsoft/vscode/issues/73904
+
+	export interface QuickPick<T extends QuickPickItem> extends QuickInput {
+		/**
+		* An optional flag to sort the final results by index of first query match in label. Defaults to true.
+		*/
+		sortByLabel: boolean;
+	}
+
+	//#endregion
+
+	//#region mjbvz - Surfacing reasons why a code action cannot be applied to users — https://github.com/microsoft/vscode/issues/85160
+
+	export interface CodeAction {
+		/**
+		 * Marks that the code action cannot currently be applied.
+		 *
+		 * This should be a human readable description of why the code action is currently disabled. Disabled code actions
+		 * will be surfaced in the refactor UI but cannot be applied.
+		 */
+		disabled?: string;
+	}
+
 	//#endregion
 }

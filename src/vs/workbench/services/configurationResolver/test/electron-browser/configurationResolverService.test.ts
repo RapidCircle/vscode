@@ -11,15 +11,17 @@ import { ICommandService } from 'vs/platform/commands/common/commands';
 import { IConfigurationResolverService } from 'vs/workbench/services/configurationResolver/common/configurationResolver';
 import { ConfigurationResolverService } from 'vs/workbench/services/configurationResolver/browser/configurationResolverService';
 import { IWorkspaceFolder } from 'vs/platform/workspace/common/workspace';
-import { TestEnvironmentService, TestEditorService, TestContextService, TestWindowService } from 'vs/workbench/test/workbenchTestServices';
+import { TestEditorService, TestContextService } from 'vs/workbench/test/workbenchTestServices';
 import { TestConfigurationService } from 'vs/platform/configuration/test/common/testConfigurationService';
 import { Disposable } from 'vs/base/common/lifecycle';
 import { IQuickInputService, IQuickPickItem, QuickPickInput, IPickOptions, Omit, IInputOptions, IQuickInputButton, IQuickPick, IInputBox, IQuickNavigateConfiguration } from 'vs/platform/quickinput/common/quickInput';
 import { CancellationToken } from 'vs/base/common/cancellation';
 import * as Types from 'vs/base/common/types';
-import { IWindowService, IWindowConfiguration } from 'vs/platform/windows/common/windows';
 import { EditorType } from 'vs/editor/common/editorCommon';
 import { Selection } from 'vs/editor/common/core/selection';
+import { NativeWorkbenchEnvironmentService } from 'vs/workbench/services/environment/electron-browser/environmentService';
+import { IWindowConfiguration } from 'vs/platform/windows/common/windows';
+import { IWorkbenchEnvironmentService } from 'vs/workbench/services/environment/common/environmentService';
 
 const mockLineNumber = 10;
 class TestEditorServiceWithActiveEditor extends TestEditorService {
@@ -38,7 +40,7 @@ class TestEditorServiceWithActiveEditor extends TestEditorService {
 suite('Configuration Resolver Service', () => {
 	let configurationResolverService: IConfigurationResolverService | null;
 	let envVariables: { [key: string]: string } = { key1: 'Value for key1', key2: 'Value for key2' };
-	let windowService: IWindowService;
+	let environmentService: IWorkbenchEnvironmentService;
 	let mockCommandService: MockCommandService;
 	let editorService: TestEditorServiceWithActiveEditor;
 	let workspace: IWorkspaceFolder;
@@ -48,14 +50,14 @@ suite('Configuration Resolver Service', () => {
 		mockCommandService = new MockCommandService();
 		editorService = new TestEditorServiceWithActiveEditor();
 		quickInputService = new MockQuickInputService();
-		windowService = new MockWindowService(envVariables);
+		environmentService = new MockWorkbenchEnvironmentService(envVariables);
 		workspace = {
 			uri: uri.parse('file:///VSCode/workspaceLocation'),
 			name: 'hey',
 			index: 0,
 			toResource: (path: string) => uri.file(path)
 		};
-		configurationResolverService = new ConfigurationResolverService(windowService, editorService, TestEnvironmentService, new MockInputsConfigurationService(), mockCommandService, new TestContextService(), quickInputService);
+		configurationResolverService = new ConfigurationResolverService(editorService, environmentService, new MockInputsConfigurationService(), mockCommandService, new TestContextService(), quickInputService);
 	});
 
 	teardown(() => {
@@ -134,7 +136,7 @@ suite('Configuration Resolver Service', () => {
 			}
 		});
 
-		let service = new ConfigurationResolverService(windowService, new TestEditorServiceWithActiveEditor(), TestEnvironmentService, configurationService, mockCommandService, new TestContextService(), quickInputService);
+		let service = new ConfigurationResolverService(new TestEditorServiceWithActiveEditor(), environmentService, configurationService, mockCommandService, new TestContextService(), quickInputService);
 		assert.strictEqual(service.resolve(workspace, 'abc ${config:editor.fontFamily} xyz'), 'abc foo xyz');
 	});
 
@@ -151,7 +153,7 @@ suite('Configuration Resolver Service', () => {
 			}
 		});
 
-		let service = new ConfigurationResolverService(windowService, new TestEditorServiceWithActiveEditor(), TestEnvironmentService, configurationService, mockCommandService, new TestContextService(), quickInputService);
+		let service = new ConfigurationResolverService(new TestEditorServiceWithActiveEditor(), environmentService, configurationService, mockCommandService, new TestContextService(), quickInputService);
 		assert.strictEqual(service.resolve(workspace, 'abc ${config:editor.fontFamily} ${config:terminal.integrated.fontFamily} xyz'), 'abc foo bar xyz');
 	});
 
@@ -168,7 +170,7 @@ suite('Configuration Resolver Service', () => {
 			}
 		});
 
-		let service = new ConfigurationResolverService(windowService, new TestEditorServiceWithActiveEditor(), TestEnvironmentService, configurationService, mockCommandService, new TestContextService(), quickInputService);
+		let service = new ConfigurationResolverService(new TestEditorServiceWithActiveEditor(), environmentService, configurationService, mockCommandService, new TestContextService(), quickInputService);
 		if (platform.isWindows) {
 			assert.strictEqual(service.resolve(workspace, 'abc ${config:editor.fontFamily} ${workspaceFolder} ${env:key1} xyz'), 'abc foo \\VSCode\\workspaceLocation Value for key1 xyz');
 		} else {
@@ -189,7 +191,7 @@ suite('Configuration Resolver Service', () => {
 			}
 		});
 
-		let service = new ConfigurationResolverService(windowService, new TestEditorServiceWithActiveEditor(), TestEnvironmentService, configurationService, mockCommandService, new TestContextService(), quickInputService);
+		let service = new ConfigurationResolverService(new TestEditorServiceWithActiveEditor(), environmentService, configurationService, mockCommandService, new TestContextService(), quickInputService);
 		if (platform.isWindows) {
 			assert.strictEqual(service.resolve(workspace, '${config:editor.fontFamily} ${config:terminal.integrated.fontFamily} ${workspaceFolder} - ${workspaceFolder} ${env:key1} - ${env:key2}'), 'foo bar \\VSCode\\workspaceLocation - \\VSCode\\workspaceLocation Value for key1 - Value for key2');
 		} else {
@@ -223,7 +225,7 @@ suite('Configuration Resolver Service', () => {
 			}
 		});
 
-		let service = new ConfigurationResolverService(windowService, new TestEditorServiceWithActiveEditor(), TestEnvironmentService, configurationService, mockCommandService, new TestContextService(), quickInputService);
+		let service = new ConfigurationResolverService(new TestEditorServiceWithActiveEditor(), environmentService, configurationService, mockCommandService, new TestContextService(), quickInputService);
 		assert.strictEqual(service.resolve(workspace, 'abc ${config:editor.fontFamily} ${config:editor.lineNumbers} ${config:editor.insertSpaces} xyz'), 'abc foo 123 false xyz');
 	});
 
@@ -233,7 +235,7 @@ suite('Configuration Resolver Service', () => {
 			editor: {}
 		});
 
-		let service = new ConfigurationResolverService(windowService, new TestEditorServiceWithActiveEditor(), TestEnvironmentService, configurationService, mockCommandService, new TestContextService(), quickInputService);
+		let service = new ConfigurationResolverService(new TestEditorServiceWithActiveEditor(), environmentService, configurationService, mockCommandService, new TestContextService(), quickInputService);
 		assert.strictEqual(service.resolve(workspace, 'abc ${unknownVariable} xyz'), 'abc ${unknownVariable} xyz');
 		assert.strictEqual(service.resolve(workspace, 'abc ${env:unknownVariable} xyz'), 'abc  xyz');
 	});
@@ -246,7 +248,7 @@ suite('Configuration Resolver Service', () => {
 			}
 		});
 
-		let service = new ConfigurationResolverService(windowService, new TestEditorServiceWithActiveEditor(), TestEnvironmentService, configurationService, mockCommandService, new TestContextService(), quickInputService);
+		let service = new ConfigurationResolverService(new TestEditorServiceWithActiveEditor(), environmentService, configurationService, mockCommandService, new TestContextService(), quickInputService);
 
 		assert.throws(() => service.resolve(workspace, 'abc ${env} xyz'));
 		assert.throws(() => service.resolve(workspace, 'abc ${env:} xyz'));
@@ -485,11 +487,24 @@ suite('Configuration Resolver Service', () => {
 			assert.equal(2, mockCommandService.callCount);
 		});
 	});
+	test('contributed variable', () => {
+		const buildTask = 'npm: compile';
+		const variable = 'defaultBuildTask';
+		const configuration = {
+			'name': '${' + variable + '}',
+		};
+		configurationResolverService!.contributeVariable(variable, async () => { return buildTask; });
+		return configurationResolverService!.resolveWithInteractionReplace(workspace, configuration).then(result => {
+			assert.deepEqual(result, {
+				'name': `${buildTask}`
+			});
+		});
+	});
 });
 
 
 class MockConfigurationService implements IConfigurationService {
-	public _serviceBrand: any;
+	public _serviceBrand: undefined;
 	public serviceId = IConfigurationService;
 	public constructor(private configuration: any = {}) { }
 	public inspect<T>(key: string, overrides?: IConfigurationOverrides): any { return { value: getConfigurationValue<T>(this.getValue(), key), default: getConfigurationValue<T>(this.getValue(), key), user: getConfigurationValue<T>(this.getValue(), key), workspaceFolder: undefined, folder: undefined }; }
@@ -516,10 +531,11 @@ class MockConfigurationService implements IConfigurationService {
 
 class MockCommandService implements ICommandService {
 
-	public _serviceBrand: any;
+	public _serviceBrand: undefined;
 	public callCount = 0;
 
 	onWillExecuteCommand = () => Disposable.None;
+	onDidExecuteCommand = () => Disposable.None;
 	public executeCommand(commandId: string, ...args: any[]): Promise<any> {
 		this.callCount++;
 
@@ -535,7 +551,7 @@ class MockCommandService implements ICommandService {
 }
 
 class MockQuickInputService implements IQuickInputService {
-	_serviceBrand: any;
+	_serviceBrand: undefined;
 
 	public pick<T extends IQuickPickItem>(picks: Promise<QuickPickInput<T>[]> | QuickPickInput<T>[], options?: IPickOptions<T> & { canPickMany: true }, token?: CancellationToken): Promise<T[]>;
 	public pick<T extends IQuickPickItem>(picks: Promise<QuickPickInput<T>[]> | QuickPickInput<T>[], options?: IPickOptions<T> & { canPickMany: false }, token?: CancellationToken): Promise<T>;
@@ -551,7 +567,7 @@ class MockQuickInputService implements IQuickInputService {
 		return Promise.resolve(options ? 'resolved' + options.prompt : 'resolved');
 	}
 
-	backButton: IQuickInputButton;
+	backButton!: IQuickInputButton;
 
 	createQuickPick<T extends IQuickPickItem>(): IQuickPick<T> {
 		throw new Error('not implemented.');
@@ -626,13 +642,9 @@ class MockInputsConfigurationService extends TestConfigurationService {
 	}
 }
 
-class MockWindowService extends TestWindowService {
+class MockWorkbenchEnvironmentService extends NativeWorkbenchEnvironmentService {
 
-	constructor(private env: platform.IProcessEnvironment) {
-		super();
-	}
-
-	getConfiguration(): IWindowConfiguration {
-		return { userEnv: this.env } as IWindowConfiguration;
+	constructor(env: platform.IProcessEnvironment) {
+		super({ userEnv: env } as IWindowConfiguration, process.execPath, 0);
 	}
 }

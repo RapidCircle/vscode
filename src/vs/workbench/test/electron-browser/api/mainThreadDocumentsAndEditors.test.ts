@@ -13,13 +13,14 @@ import { ITextFileService } from 'vs/workbench/services/textfile/common/textfile
 import { ExtHostDocumentsAndEditorsShape, IDocumentsAndEditorsDelta } from 'vs/workbench/api/common/extHost.protocol';
 import { createTestCodeEditor, TestCodeEditor } from 'vs/editor/test/browser/testCodeEditor';
 import { mock } from 'vs/workbench/test/electron-browser/api/mock';
-import { TestEditorService, TestEditorGroupsService, TestTextResourcePropertiesService } from 'vs/workbench/test/workbenchTestServices';
+import { TestEditorService, TestEditorGroupsService, TestTextResourcePropertiesService, TestEnvironmentService } from 'vs/workbench/test/workbenchTestServices';
 import { Event } from 'vs/base/common/event';
 import { ITextModel } from 'vs/editor/common/model';
 import { ServiceCollection } from 'vs/platform/instantiation/common/serviceCollection';
 import { ICodeEditorService } from 'vs/editor/browser/services/codeEditorService';
 import { IFileService } from 'vs/platform/files/common/files';
 import { IPanelService } from 'vs/workbench/services/panel/common/panelService';
+import { TestThemeService } from 'vs/platform/theme/test/common/testThemeService';
 
 suite('MainThreadDocumentsAndEditors', () => {
 
@@ -42,7 +43,7 @@ suite('MainThreadDocumentsAndEditors', () => {
 		deltas.length = 0;
 		const configService = new TestConfigurationService();
 		configService.setUserConfiguration('editor', { 'detectIndentation': false });
-		modelService = new ModelServiceImpl(configService, new TestTextResourcePropertiesService(configService));
+		modelService = new ModelServiceImpl(configService, new TestTextResourcePropertiesService(configService), new TestThemeService());
 		codeEditorService = new TestCodeEditorService();
 		textFileService = new class extends mock<ITextFileService>() {
 			isDirty() { return false; }
@@ -75,13 +76,14 @@ suite('MainThreadDocumentsAndEditors', () => {
 			editorGroupService,
 			null!,
 			new class extends mock<IPanelService>() implements IPanelService {
-				_serviceBrand: any;
+				_serviceBrand: undefined;
 				onDidPanelOpen = Event.None;
 				onDidPanelClose = Event.None;
 				getActivePanel() {
-					return null;
+					return undefined;
 				}
-			}
+			},
+			TestEnvironmentService
 		);
 		/* tslint:enable */
 	});

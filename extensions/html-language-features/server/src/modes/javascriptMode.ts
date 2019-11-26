@@ -8,7 +8,7 @@ import {
 	SymbolInformation, SymbolKind, CompletionItem, Location, SignatureHelp, SignatureInformation, ParameterInformation,
 	Definition, TextEdit, TextDocument, Diagnostic, DiagnosticSeverity, Range, CompletionItemKind, Hover, MarkedString,
 	DocumentHighlight, DocumentHighlightKind, CompletionList, Position, FormattingOptions, FoldingRange, FoldingRangeKind
-} from 'vscode-languageserver-types';
+} from 'vscode-html-languageservice';
 import { LanguageMode, Settings } from './languageModes';
 import { getWordAtText, startsWith, isWhitespaceOnly, repeat } from '../utils/strings';
 import { HTMLDocumentRegions } from './embeddedSupport';
@@ -173,16 +173,17 @@ export function getJavaScriptMode(documentRegions: LanguageModelCache<HTMLDocume
 		},
 		findDocumentHighlight(document: TextDocument, position: Position): DocumentHighlight[] {
 			updateCurrentTextDocument(document);
-			let occurrences = jsLanguageService.getOccurrencesAtPosition(FILE_NAME, currentTextDocument.offsetAt(position));
-			if (occurrences) {
-				return occurrences.map(entry => {
-					return {
-						range: convertRange(currentTextDocument, entry.textSpan),
-						kind: <DocumentHighlightKind>(entry.isWriteAccess ? DocumentHighlightKind.Write : DocumentHighlightKind.Text)
-					};
-				});
+			const highlights = jsLanguageService.getDocumentHighlights(FILE_NAME, currentTextDocument.offsetAt(position), [FILE_NAME]);
+			const out: DocumentHighlight[] = [];
+			for (const entry of highlights || []) {
+				for (const highlight of entry.highlightSpans) {
+					out.push({
+						range: convertRange(currentTextDocument, highlight.textSpan),
+						kind: highlight.kind === 'writtenReference' ? DocumentHighlightKind.Write : DocumentHighlightKind.Text
+					});
+				}
 			}
-			return [];
+			return out;
 		},
 		findDocumentSymbols(document: TextDocument): SymbolInformation[] {
 			updateCurrentTextDocument(document);

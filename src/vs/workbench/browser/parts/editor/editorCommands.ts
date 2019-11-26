@@ -263,7 +263,10 @@ function registerDiffEditorCommands(): void {
 		const candidates = [editorService.activeControl, ...editorService.visibleControls].filter(e => e instanceof TextDiffEditor);
 
 		if (candidates.length > 0) {
-			next ? (<TextDiffEditor>candidates[0]).getDiffNavigator().next() : (<TextDiffEditor>candidates[0]).getDiffNavigator().previous();
+			const navigator = (<TextDiffEditor>candidates[0]).getDiffNavigator();
+			if (navigator) {
+				next ? navigator.next() : navigator.previous();
+			}
 		}
 	}
 
@@ -315,7 +318,7 @@ function registerOpenEditorAtIndexCommands(): void {
 		const editorService = accessor.get(IEditorService);
 		const activeControl = editorService.activeControl;
 		if (activeControl) {
-			const editor = activeControl.group.getEditor(editorIndex);
+			const editor = activeControl.group.getEditorByIndex(editorIndex);
 			if (editor) {
 				editorService.openEditor(editor);
 			}
@@ -443,11 +446,11 @@ export function splitEditor(editorGroupService: IEditorGroupsService, direction:
 	const newGroup = editorGroupService.addGroup(sourceGroup, direction);
 
 	// Split editor (if it can be split)
-	let editorToCopy: IEditorInput | null;
+	let editorToCopy: IEditorInput | undefined;
 	if (context && typeof context.editorIndex === 'number') {
-		editorToCopy = sourceGroup.getEditor(context.editorIndex);
+		editorToCopy = sourceGroup.getEditorByIndex(context.editorIndex);
 	} else {
-		editorToCopy = sourceGroup.activeEditor;
+		editorToCopy = types.withNullAsUndefined(sourceGroup.activeEditor);
 	}
 
 	if (editorToCopy && (editorToCopy as EditorInput).supportsSplitEditor()) {
@@ -545,7 +548,7 @@ function registerCloseEditorCommands() {
 				if (group) {
 					const editors = coalesce(contexts
 						.filter(context => context.groupId === groupId)
-						.map(context => typeof context.editorIndex === 'number' ? group.getEditor(context.editorIndex) : group.activeEditor));
+						.map(context => typeof context.editorIndex === 'number' ? group.getEditorByIndex(context.editorIndex) : group.activeEditor));
 
 					return group.closeEditors(editors);
 				}
@@ -600,8 +603,12 @@ function registerCloseEditorCommands() {
 				if (group) {
 					const editors = contexts
 						.filter(context => context.groupId === groupId)
-						.map(context => typeof context.editorIndex === 'number' ? group.getEditor(context.editorIndex) : group.activeEditor);
+						.map(context => typeof context.editorIndex === 'number' ? group.getEditorByIndex(context.editorIndex) : group.activeEditor);
 					const editorsToClose = group.editors.filter(e => editors.indexOf(e) === -1);
+
+					if (group.activeEditor) {
+						group.pinEditor(group.activeEditor);
+					}
 
 					return group.closeEditors(editorsToClose);
 				}
@@ -621,6 +628,10 @@ function registerCloseEditorCommands() {
 
 			const { group, editor } = resolveCommandsContext(editorGroupService, getCommandsContext(resourceOrContext, context));
 			if (group && editor) {
+				if (group.activeEditor) {
+					group.pinEditor(group.activeEditor);
+				}
+
 				return group.closeEditors({ direction: CloseDirection.RIGHT, except: editor });
 			}
 
@@ -670,19 +681,17 @@ function registerCloseEditorCommands() {
 		}
 	});
 
-	CommandsRegistry.registerCommand(CLOSE_EDITORS_AND_GROUP_COMMAND_ID, (accessor: ServicesAccessor, resourceOrContext: URI | IEditorCommandsContext, context?: IEditorCommandsContext) => {
+	CommandsRegistry.registerCommand(CLOSE_EDITORS_AND_GROUP_COMMAND_ID, async (accessor: ServicesAccessor, resourceOrContext: URI | IEditorCommandsContext, context?: IEditorCommandsContext) => {
 		const editorGroupService = accessor.get(IEditorGroupsService);
 
 		const { group } = resolveCommandsContext(editorGroupService, getCommandsContext(resourceOrContext, context));
 		if (group) {
-			return group.closeAllEditors().then(() => {
-				if (group.count === 0 && editorGroupService.getGroup(group.id) /* could be gone by now */) {
-					editorGroupService.removeGroup(group); // only remove group if it is now empty
-				}
-			});
-		}
+			await group.closeAllEditors();
 
-		return undefined;
+			if (group.count === 0 && editorGroupService.getGroup(group.id) /* could be gone by now */) {
+				editorGroupService.removeGroup(group); // only remove group if it is now empty
+			}
+		}
 	});
 }
 
@@ -706,7 +715,7 @@ function resolveCommandsContext(editorGroupService: IEditorGroupsService, contex
 
 	// Resolve from context
 	let group = context && typeof context.groupId === 'number' ? editorGroupService.getGroup(context.groupId) : undefined;
-	let editor = group && context && typeof context.editorIndex === 'number' ? types.withNullAsUndefined(group.getEditor(context.editorIndex)) : undefined;
+	let editor = group && context && typeof context.editorIndex === 'number' ? types.withNullAsUndefined(group.getEditorByIndex(context.editorIndex)) : undefined;
 	let control = group ? group.activeControl : undefined;
 
 	// Fallback to active group as needed
@@ -743,7 +752,7 @@ export function getMultiSelectedEditorContexts(editorContext: IEditorCommandsCon
 			const selection: Array<IEditorIdentifier | IEditorGroup> = list.getSelectedElements().filter(onlyEditorGroupAndEditor);
 
 			// Only respect selection if it contains focused element
-			if (selection && selection.some(s => {
+			if (selection?.some(s => {
 				if (isEditorGroup(s)) {
 					return s.id === focus.groupId;
 				}

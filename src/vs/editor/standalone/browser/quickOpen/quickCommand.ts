@@ -82,13 +82,13 @@ export class QuickCommandAction extends BaseEditorQuickOpenAction {
 			id: 'editor.action.quickCommand',
 			label: QuickCommandNLS.quickCommandActionLabel,
 			alias: 'Command Palette',
-			precondition: null,
+			precondition: undefined,
 			kbOpts: {
 				kbExpr: EditorContextKeys.focus,
 				primary: (browser.isIE ? KeyMod.Alt | KeyCode.F1 : KeyCode.F1),
 				weight: KeybindingWeight.EditorContrib
 			},
-			menuOpts: {
+			contextMenuOpts: {
 				group: 'z_commands',
 				order: 1
 			}

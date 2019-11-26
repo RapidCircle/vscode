@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { join, dirname } from 'vs/base/common/path';
+import { join } from 'vs/base/common/path';
 import { Queue } from 'vs/base/common/async';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -11,7 +11,6 @@ import * as platform from 'vs/base/common/platform';
 import { Event } from 'vs/base/common/event';
 import { endsWith } from 'vs/base/common/strings';
 import { promisify } from 'util';
-import { CancellationToken } from 'vs/base/common/cancellation';
 import { isRootOrDriveLetter } from 'vs/base/common/extpath';
 import { generateUuid } from 'vs/base/common/uuid';
 import { normalizeNFC } from 'vs/base/common/normalization';
@@ -138,6 +137,20 @@ export async function readdir(path: string): Promise<string[]> {
 	return handleDirectoryChildren(await promisify(fs.readdir)(path));
 }
 
+export async function readdirWithFileTypes(path: string): Promise<fs.Dirent[]> {
+	const children = await promisify(fs.readdir)(path, { withFileTypes: true });
+
+	// Mac: uses NFD unicode form on disk, but we want NFC
+	// See also https://github.com/nodejs/node/issues/2165
+	if (platform.isMacintosh) {
+		for (const child of children) {
+			child.name = normalizeNFC(child.name);
+		}
+	}
+
+	return children;
+}
+
 export function readdirSync(path: string): string[] {
 	return handleDirectoryChildren(fs.readdirSync(path));
 }
@@ -213,10 +226,6 @@ export function symlink(target: string, path: string, type?: string): Promise<vo
 	return promisify(fs.symlink)(target, path, type);
 }
 
-export function readlink(path: string): Promise<string> {
-	return promisify(fs.readlink)(path);
-}
-
 export function truncate(path: string, len: number): Promise<void> {
 	return promisify(fs.truncate)(path, len);
 }
@@ -230,7 +239,7 @@ export function readFile(path: string, encoding?: string): Promise<Buffer | stri
 // According to node.js docs (https://nodejs.org/docs/v6.5.0/api/fs.html#fs_fs_writefile_file_data_options_callback)
 // it is not safe to call writeFile() on the same path multiple times without waiting for the callback to return.
 // Therefor we use a Queue on the path that is given to us to sequentialize calls to the same path properly.
-const writeFilePathQueue: { [path: string]: Queue<void> } = Object.create(null);
+const writeFilePathQueues: Map<string, Queue<void>> = new Map();
 
 export function writeFile(path: string, data: string, options?: IWriteFileOptions): Promise<void>;
 export function writeFile(path: string, data: Buffer, options?: IWriteFileOptions): Promise<void>;
@@ -253,17 +262,19 @@ function toQueueKey(path: string): string {
 }
 
 function ensureWriteFileQueue(queueKey: string): Queue<void> {
-	let writeFileQueue = writeFilePathQueue[queueKey];
-	if (!writeFileQueue) {
-		writeFileQueue = new Queue<void>();
-		writeFilePathQueue[queueKey] = writeFileQueue;
-
-		const onFinish = Event.once(writeFileQueue.onFinished);
-		onFinish(() => {
-			delete writeFilePathQueue[queueKey];
-			writeFileQueue.dispose();
-		});
+	const existingWriteFileQueue = writeFilePathQueues.get(queueKey);
+	if (existingWriteFileQueue) {
+		return existingWriteFileQueue;
 	}
+
+	const writeFileQueue = new Queue<void>();
+	writeFilePathQueues.set(queueKey, writeFileQueue);
+
+	const onFinish = Event.once(writeFileQueue.onFinished);
+	onFinish(() => {
+		writeFilePathQueues.delete(queueKey);
+		writeFileQueue.dispose();
+	});
 
 	return writeFileQueue;
 }
@@ -386,7 +397,7 @@ function doWriteFileStreamAndFlush(path: string, reader: NodeJS.ReadableStream, 
 // not in some cache.
 //
 // See https://github.com/nodejs/node/blob/v5.10.0/lib/fs.js#L1194
-function doWriteFileAndFlush(path: string, data: string | Buffer | Uint8Array, options: IEnsuredWriteFileOptions, callback: (error?: Error) => void): void {
+function doWriteFileAndFlush(path: string, data: string | Buffer | Uint8Array, options: IEnsuredWriteFileOptions, callback: (error: Error | null) => void): void {
 	if (options.encoding) {
 		data = encode(data instanceof Uint8Array ? Buffer.from(data) : data, options.encoding.charset, { addBOM: options.encoding.addBOM });
 	}
@@ -621,53 +632,17 @@ async function doCopyFile(source: string, target: string, mode: number): Promise
 	});
 }
 
-export async function mkdirp(path: string, mode?: number, token?: CancellationToken): Promise<void> {
-	const mkdir = async () => {
-		try {
-			await promisify(fs.mkdir)(path, mode);
-		} catch (error) {
-
-			// ENOENT: a parent folder does not exist yet
-			if (error.code === 'ENOENT') {
-				return Promise.reject(error);
-			}
-
-			// Any other error: check if folder exists and
-			// return normally in that case if its a folder
-			try {
-				const fileStat = await stat(path);
-				if (!fileStat.isDirectory()) {
-					return Promise.reject(new Error(`'${path}' exists and is not a directory.`));
-				}
-			} catch (statError) {
-				throw error; // rethrow original error
-			}
-		}
-	};
-
-	// stop at root
-	if (path === dirname(path)) {
-		return Promise.resolve();
-	}
-
-	try {
-		await mkdir();
-	} catch (error) {
-
-		// Respect cancellation
-		if (token && token.isCancellationRequested) {
-			return Promise.resolve();
-		}
-
-		// ENOENT: a parent folder does not exist yet, continue
-		// to create the parent folder and then try again.
-		if (error.code === 'ENOENT') {
-			await mkdirp(dirname(path), mode);
-
-			return mkdir();
-		}
-
-		// Any other error
-		return Promise.reject(error);
-	}
+export async function mkdirp(path: string, mode?: number): Promise<void> {
+	return promisify(fs.mkdir)(path, { mode, recursive: true });
 }
+
+// See https://github.com/Microsoft/vscode/issues/30180
+const WIN32_MAX_FILE_SIZE = 300 * 1024 * 1024; // 300 MB
+const GENERAL_MAX_FILE_SIZE = 16 * 1024 * 1024 * 1024; // 16 GB
+
+// See https://github.com/v8/v8/blob/5918a23a3d571b9625e5cce246bdd5b46ff7cd8b/src/heap/heap.cc#L149
+const WIN32_MAX_HEAP_SIZE = 700 * 1024 * 1024; // 700 MB
+const GENERAL_MAX_HEAP_SIZE = 700 * 2 * 1024 * 1024; // 1400 MB
+
+export const MAX_FILE_SIZE = process.arch === 'ia32' ? WIN32_MAX_FILE_SIZE : GENERAL_MAX_FILE_SIZE;
+export const MAX_HEAP_SIZE = process.arch === 'ia32' ? WIN32_MAX_HEAP_SIZE : GENERAL_MAX_HEAP_SIZE;

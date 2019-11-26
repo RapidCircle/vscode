@@ -7,15 +7,15 @@ import {
 	createConnection, IConnection, TextDocuments, InitializeParams, InitializeResult, RequestType,
 	DocumentRangeFormattingRequest, Disposable, DocumentSelector, TextDocumentPositionParams, ServerCapabilities,
 	Position, ConfigurationRequest, ConfigurationParams, DidChangeWorkspaceFoldersNotification,
-	WorkspaceFolder, DocumentColorRequest, ColorInformation, ColorPresentationRequest
+	WorkspaceFolder, DocumentColorRequest, ColorInformation, ColorPresentationRequest, TextDocumentSyncKind
 } from 'vscode-languageserver';
-import { TextDocument, Diagnostic, DocumentLink, SymbolInformation } from 'vscode-languageserver-types';
+import { TextDocument, Diagnostic, DocumentLink, SymbolInformation } from 'vscode-html-languageservice';
 import { getLanguageModes, LanguageModes, Settings } from './modes/languageModes';
 
 import { format } from './modes/formatting';
 import { pushAll } from './utils/arrays';
 import { getDocumentContext } from './utils/documentContext';
-import uri from 'vscode-uri';
+import { URI } from 'vscode-uri';
 import { formatError, runSafe, runSafeAsync } from './utils/runner';
 
 import { getFoldingRanges } from './modes/htmlFolding';
@@ -23,6 +23,9 @@ import { getDataProviders } from './customData';
 
 namespace TagCloseRequest {
 	export const type: RequestType<TextDocumentPositionParams, string | null, any, any> = new RequestType('html/tag');
+}
+namespace MatchingTagPositionRequest {
+	export const type: RequestType<TextDocumentPositionParams, Position | null, any, any> = new RequestType('html/matchingTagPosition');
 }
 
 // Create a connection for the server
@@ -38,9 +41,8 @@ process.on('uncaughtException', (e: any) => {
 	console.error(formatError(`Unhandled exception`, e));
 });
 
-// Create a simple text document manager. The text document manager
-// supports full document sync only
-const documents: TextDocuments = new TextDocuments();
+// Create a text document manager.
+const documents = new TextDocuments(TextDocument);
 // Make the text document manager listen on the connection
 // for open, change and close text document events
 documents.listen(connection);
@@ -50,7 +52,7 @@ let workspaceFolders: WorkspaceFolder[] = [];
 let languageModes: LanguageModes;
 
 let clientSnippetSupport = false;
-let clientDynamicRegisterSupport = false;
+let dynamicFormatterRegistration = false;
 let scopedSettingsSupport = false;
 let workspaceFoldersSupport = false;
 let foldingRangeLimit = Number.MAX_VALUE;
@@ -85,7 +87,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
 	if (!Array.isArray(workspaceFolders)) {
 		workspaceFolders = [];
 		if (params.rootPath) {
-			workspaceFolders.push({ name: '', uri: uri.file(params.rootPath).toString() });
+			workspaceFolders.push({ name: '', uri: URI.file(params.rootPath).toString() });
 		}
 	}
 
@@ -97,7 +99,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
 		get folders() { return workspaceFolders; }
 	};
 
-	languageModes = getLanguageModes(initializationOptions ? initializationOptions.embeddedLanguages : { css: true, javascript: true }, workspace, providers);
+	languageModes = getLanguageModes(initializationOptions ? initializationOptions.embeddedLanguages : { css: true, javascript: true }, workspace, params.capabilities, providers);
 
 	documents.onDidClose(e => {
 		languageModes.onDocumentRemoved(e.document);
@@ -119,24 +121,25 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
 	}
 
 	clientSnippetSupport = getClientCapability('textDocument.completion.completionItem.snippetSupport', false);
-	clientDynamicRegisterSupport = getClientCapability('workspace.symbol.dynamicRegistration', false);
+	dynamicFormatterRegistration = getClientCapability('textDocument.rangeFormatting.dynamicRegistration', false) && (typeof params.initializationOptions.provideFormatter !== 'boolean');
 	scopedSettingsSupport = getClientCapability('workspace.configuration', false);
 	workspaceFoldersSupport = getClientCapability('workspace.workspaceFolders', false);
 	foldingRangeLimit = getClientCapability('textDocument.foldingRange.rangeLimit', Number.MAX_VALUE);
 	const capabilities: ServerCapabilities = {
-		// Tell the client that the server works in FULL text document sync mode
-		textDocumentSync: documents.syncKind,
+		textDocumentSync: TextDocumentSyncKind.Incremental,
 		completionProvider: clientSnippetSupport ? { resolveProvider: true, triggerCharacters: ['.', ':', '<', '"', '=', '/'] } : undefined,
 		hoverProvider: true,
 		documentHighlightProvider: true,
-		documentRangeFormattingProvider: false,
+		documentRangeFormattingProvider: params.initializationOptions.provideFormatter === true,
 		documentLinkProvider: { resolveProvider: false },
 		documentSymbolProvider: true,
 		definitionProvider: true,
 		signatureHelpProvider: { triggerCharacters: ['('] },
 		referencesProvider: true,
 		colorProvider: {},
-		foldingRangeProvider: true
+		foldingRangeProvider: true,
+		selectionRangeProvider: true,
+		renameProvider: true
 	};
 	return { capabilities };
 });
@@ -171,7 +174,7 @@ connection.onDidChangeConfiguration((change) => {
 	documents.all().forEach(triggerValidation);
 
 	// dynamically enable & disable the formatter
-	if (clientDynamicRegisterSupport) {
+	if (dynamicFormatterRegistration) {
 		const enableFormatter = globalSettings && globalSettings.html && globalSettings.html.format && globalSettings.html.format.enable;
 		if (enableFormatter) {
 			if (!formatterRegistration) {
@@ -455,7 +458,7 @@ connection.onFoldingRanges((params, token) => {
 	}, null, `Error while computing folding regions for ${params.textDocument.uri}`, token);
 });
 
-connection.onRequest('$/textDocument/selectionRanges', async (params, token) => {
+connection.onSelectionRanges((params, token) => {
 	return runSafe(() => {
 		const document = documents.get(params.textDocument.uri);
 		const positions: Position[] = params.positions;
@@ -466,10 +469,40 @@ connection.onRequest('$/textDocument/selectionRanges', async (params, token) => 
 				return htmlMode.getSelectionRanges(document, positions);
 			}
 		}
-		return Promise.resolve(null);
-	}, null, `Error while computing selection ranges for ${params.textDocument.uri}`, token);
+		return [];
+	}, [], `Error while computing selection ranges for ${params.textDocument.uri}`, token);
 });
 
+connection.onRenameRequest((params, token) => {
+	return runSafe(() => {
+		const document = documents.get(params.textDocument.uri);
+		const position: Position = params.position;
+
+		if (document) {
+			const htmlMode = languageModes.getMode('html');
+			if (htmlMode && htmlMode.doRename) {
+				return htmlMode.doRename(document, position, params.newName);
+			}
+		}
+		return null;
+	}, null, `Error while computing rename for ${params.textDocument.uri}`, token);
+});
+
+connection.onRequest(MatchingTagPositionRequest.type, (params, token) => {
+	return runSafe(() => {
+		const document = documents.get(params.textDocument.uri);
+		if (document) {
+			const pos = params.position;
+			if (pos.character > 0) {
+				const mode = languageModes.getModeAtPosition(document, Position.create(pos.line, pos.character - 1));
+				if (mode && mode.findMatchingTagPosition) {
+					return mode.findMatchingTagPosition(document, pos);
+				}
+			}
+		}
+		return null;
+	}, null, `Error while computing matching tag position for ${params.textDocument.uri}`, token);
+});
 
 // Listen on the connection
 connection.listen();

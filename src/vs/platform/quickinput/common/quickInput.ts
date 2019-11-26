@@ -162,6 +162,16 @@ export interface IQuickPick<T extends IQuickPickItem> extends IQuickInput {
 
 	readonly onDidAccept: Event<void>;
 
+	ok: boolean;
+
+	readonly onDidCustom: Event<void>;
+
+	customButton: boolean;
+
+	customLabel: string | undefined;
+
+	customHover: string | undefined;
+
 	buttons: ReadonlyArray<IQuickInputButton>;
 
 	readonly onDidTriggerButton: Event<IQuickInputButton>;
@@ -177,6 +187,8 @@ export interface IQuickPick<T extends IQuickPickItem> extends IQuickInput {
 	matchOnDetail: boolean;
 
 	matchOnLabel: boolean;
+
+	sortByLabel: boolean;
 
 	autoFocusOnList: boolean;
 
@@ -247,7 +259,7 @@ export type QuickPickInput<T = IQuickPickItem> = T | IQuickPickSeparator;
 
 export interface IQuickInputService {
 
-	_serviceBrand: any;
+	_serviceBrand: undefined;
 
 	/**
 	 * Opens the quick input box for selecting items and returns a promise with the user selected item(s) if any.

@@ -27,6 +27,7 @@ import { ITextModelService, IResolvedTextEditorModel } from 'vs/editor/common/se
 import { IReference, ImmortalReference } from 'vs/base/common/lifecycle';
 import { IPanelService } from 'vs/workbench/services/panel/common/panelService';
 import { LabelService } from 'vs/workbench/services/label/common/labelService';
+import { TestThemeService } from 'vs/platform/theme/test/common/testThemeService';
 
 suite('MainThreadEditors', () => {
 
@@ -41,7 +42,7 @@ suite('MainThreadEditors', () => {
 
 	setup(() => {
 		const configService = new TestConfigurationService();
-		modelService = new ModelServiceImpl(configService, new TestTextResourcePropertiesService(configService));
+		modelService = new ModelServiceImpl(configService, new TestTextResourcePropertiesService(configService), new TestThemeService());
 		const codeEditorService = new TestCodeEditorService();
 
 		movedResources.clear();
@@ -54,7 +55,7 @@ suite('MainThreadEditors', () => {
 			isDirty() { return false; }
 			create(uri: URI, contents?: string, options?: any) {
 				createdResources.add(uri);
-				return Promise.resolve(undefined);
+				return Promise.resolve(Object.create(null));
 			}
 			delete(resource: URI) {
 				deletedResources.add(resource);
@@ -62,7 +63,7 @@ suite('MainThreadEditors', () => {
 			}
 			move(source: URI, target: URI) {
 				movedResources.set(source, target);
-				return Promise.resolve(undefined);
+				return Promise.resolve(Object.create(null));
 			}
 			models = <any>{
 				onModelSaved: Event.None,
@@ -107,13 +108,14 @@ suite('MainThreadEditors', () => {
 			editorGroupService,
 			bulkEditService,
 			new class extends mock<IPanelService>() implements IPanelService {
-				_serviceBrand: any;
+				_serviceBrand: undefined;
 				onDidPanelOpen = Event.None;
 				onDidPanelClose = Event.None;
 				getActivePanel() {
-					return null;
+					return undefined;
 				}
-			}
+			},
+			TestEnvironmentService
 		);
 
 		editors = new MainThreadTextEditors(

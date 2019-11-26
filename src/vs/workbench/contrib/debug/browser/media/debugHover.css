@@ -10,6 +10,7 @@
 	animation-duration: 0.15s;
 	animation-name: fadeIn;
 	user-select: text;
+	-webkit-user-select: text;
 	word-break: break-all;
 	padding: 4px 5px;
 }
@@ -22,10 +23,12 @@
 	padding-left: 15px;
 	padding-right: 2px;
 	font-size: 11px;
+	line-height: 18px;
 	word-break: normal;
 	text-overflow: ellipsis;
 	height: 18px;
 	overflow: hidden;
+	white-space: pre;
 	border-bottom: 1px solid rgba(128, 128, 128, 0.35);
 }
 
@@ -36,6 +39,7 @@
 
 .monaco-editor .debug-hover-widget .debug-hover-tree .monaco-list-row .monaco-tl-contents {
 	user-select: text;
+	-webkit-user-select: text;
 }
 
 /* Disable tree highlight in debug hover tree. */
@@ -58,10 +62,6 @@
 	overflow: auto;
 	font-family: var(--monaco-monospace-font);
 	max-height: 500px;
-}
-
-.monaco-editor .debug-hover-widget .monaco-tl-contents .value {
-	white-space: nowrap;
 }
 
 .monaco-editor .debug-hover-widget .error {

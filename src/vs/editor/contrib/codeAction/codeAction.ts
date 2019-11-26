@@ -13,10 +13,23 @@ import { Selection } from 'vs/editor/common/core/selection';
 import { ITextModel } from 'vs/editor/common/model';
 import { CodeAction, CodeActionContext, CodeActionProviderRegistry, CodeActionTrigger as CodeActionTriggerKind } from 'vs/editor/common/modes';
 import { IModelService } from 'vs/editor/common/services/modelService';
-import { CodeActionFilter, CodeActionKind, CodeActionTrigger, filtersAction, mayIncludeActionsOfKind } from './codeActionTrigger';
+import { CodeActionFilter, CodeActionKind, CodeActionTrigger, filtersAction, mayIncludeActionsOfKind } from './types';
 import { TextModelCancellationTokenSource } from 'vs/editor/browser/core/editorState';
+import { DisposableStore, IDisposable, Disposable } from 'vs/base/common/lifecycle';
 
-export class CodeActionSet {
+export const codeActionCommandId = 'editor.action.codeAction';
+export const refactorCommandId = 'editor.action.refactor';
+export const sourceActionCommandId = 'editor.action.sourceAction';
+export const organizeImportsCommandId = 'editor.action.organizeImports';
+export const fixAllCommandId = 'editor.action.fixAll';
+
+export interface CodeActionSet extends IDisposable {
+	readonly validActions: readonly CodeAction[];
+	readonly allActions: readonly CodeAction[];
+	readonly hasAutoFix: boolean;
+}
+
+class ManagedCodeActionSet extends Disposable implements CodeActionSet {
 
 	private static codeActionsComparator(a: CodeAction, b: CodeAction): number {
 		if (isNonEmptyArray(a.diagnostics)) {
@@ -32,14 +45,18 @@ export class CodeActionSet {
 		}
 	}
 
-	public readonly actions: ReadonlyArray<CodeAction>;
+	public readonly validActions: readonly CodeAction[];
+	public readonly allActions: readonly CodeAction[];
 
-	public constructor(actions: CodeAction[]) {
-		this.actions = mergeSort(actions, CodeActionSet.codeActionsComparator);
+	public constructor(actions: readonly CodeAction[], disposables: DisposableStore) {
+		super();
+		this._register(disposables);
+		this.allActions = mergeSort([...actions], ManagedCodeActionSet.codeActionsComparator);
+		this.validActions = this.allActions.filter(action => !action.disabled);
 	}
 
 	public get hasAutoFix() {
-		return this.actions.some(fix => !!fix.kind && CodeActionKind.QuickFix.contains(new CodeActionKind(fix.kind)) && !!fix.isPreferred);
+		return this.validActions.some(fix => !!fix.kind && CodeActionKind.QuickFix.contains(new CodeActionKind(fix.kind)) && !!fix.isPreferred);
 	}
 }
 
@@ -52,27 +69,29 @@ export function getCodeActions(
 	const filter = trigger.filter || {};
 
 	const codeActionContext: CodeActionContext = {
-		only: filter.kind ? filter.kind.value : undefined,
+		only: filter.include?.value,
 		trigger: trigger.type === 'manual' ? CodeActionTriggerKind.Manual : CodeActionTriggerKind.Automatic
 	};
 
 	const cts = new TextModelCancellationTokenSource(model, token);
 	const providers = getCodeActionProviders(model, filter);
 
-	const promises = providers.map(provider => {
-		return Promise.resolve(provider.provideCodeActions(model, rangeOrSelection, codeActionContext, cts.token)).then(providedCodeActions => {
-			if (cts.token.isCancellationRequested || !Array.isArray(providedCodeActions)) {
+	const disposables = new DisposableStore();
+	const promises = providers.map(async provider => {
+		try {
+			const providedCodeActions = await provider.provideCodeActions(model, rangeOrSelection, codeActionContext, cts.token);
+			if (cts.token.isCancellationRequested || !providedCodeActions) {
 				return [];
 			}
-			return providedCodeActions.filter(action => action && filtersAction(filter, action));
-		}, (err): CodeAction[] => {
+			disposables.add(providedCodeActions);
+			return providedCodeActions.actions.filter(action => action && filtersAction(filter, action));
+		} catch (err) {
 			if (isPromiseCanceledError(err)) {
 				throw err;
 			}
-
 			onUnexpectedExternalError(err);
 			return [];
-		});
+		}
 	});
 
 	const listener = CodeActionProviderRegistry.onDidChange(() => {
@@ -84,7 +103,7 @@ export function getCodeActions(
 
 	return Promise.all(promises)
 		.then(flatten)
-		.then(actions => new CodeActionSet(actions))
+		.then(actions => new ManagedCodeActionSet(actions, disposables))
 		.finally(() => {
 			listener.dispose();
 			cts.dispose();
@@ -106,9 +125,9 @@ function getCodeActionProviders(
 		});
 }
 
-registerLanguageCommand('_executeCodeActionProvider', function (accessor, args): Promise<ReadonlyArray<CodeAction>> {
-	const { resource, range, kind } = args;
-	if (!(resource instanceof URI) || !Range.isIRange(range)) {
+registerLanguageCommand('_executeCodeActionProvider', async function (accessor, args): Promise<ReadonlyArray<CodeAction>> {
+	const { resource, rangeOrSelection, kind } = args;
+	if (!(resource instanceof URI)) {
 		throw illegalArgument();
 	}
 
@@ -117,9 +136,22 @@ registerLanguageCommand('_executeCodeActionProvider', function (accessor, args):
 		throw illegalArgument();
 	}
 
-	return getCodeActions(
+	const validatedRangeOrSelection = Selection.isISelection(rangeOrSelection)
+		? Selection.liftSelection(rangeOrSelection)
+		: Range.isIRange(rangeOrSelection)
+			? model.validateRange(rangeOrSelection)
+			: undefined;
+
+	if (!validatedRangeOrSelection) {
+		throw illegalArgument();
+	}
+
+	const codeActionSet = await getCodeActions(
 		model,
-		model.validateRange(range),
-		{ type: 'manual', filter: { includeSourceActions: true, kind: kind && kind.value ? new CodeActionKind(kind.value) : undefined } },
-		CancellationToken.None).then(actions => actions.actions);
+		validatedRangeOrSelection,
+		{ type: 'manual', filter: { includeSourceActions: true, include: kind && kind.value ? new CodeActionKind(kind.value) : undefined } },
+		CancellationToken.None);
+
+	setTimeout(() => codeActionSet.dispose(), 100);
+	return codeActionSet.validActions;
 });

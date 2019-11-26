@@ -5,20 +5,20 @@
 
 import { onUnexpectedError } from 'vs/base/common/errors';
 import { once as onceFn } from 'vs/base/common/functional';
-import { combinedDisposable, Disposable, IDisposable, toDisposable } from 'vs/base/common/lifecycle';
+import { Disposable, IDisposable, toDisposable, combinedDisposable, DisposableStore } from 'vs/base/common/lifecycle';
 import { LinkedList } from 'vs/base/common/linkedList';
+import { CancellationToken } from 'vs/base/common/cancellation';
 
 /**
  * To an event a function with one or zero parameters
  * can be subscribed. The event is the subscriber function itself.
  */
 export interface Event<T> {
-	(listener: (e: T) => any, thisArgs?: any, disposables?: IDisposable[]): IDisposable;
+	(listener: (e: T) => any, thisArgs?: any, disposables?: IDisposable[] | DisposableStore): IDisposable;
 }
 
 export namespace Event {
-	const _disposable = { dispose() { } };
-	export const None: Event<any> = function () { return _disposable; };
+	export const None: Event<any> = () => Disposable.None;
 
 	/**
 	 * Given an event, returns another event which only fires once.
@@ -50,7 +50,7 @@ export namespace Event {
 
 	/**
 	 * Given an event and a `map` function, returns another event which maps each element
-	 * throught the mapping function.
+	 * through the mapping function.
 	 */
 	export function map<I, O>(event: Event<I>, map: (i: I) => O): Event<O> {
 		return snapshot((listener, thisArgs = null, disposables?) => event(i => listener.call(thisArgs, map(i)), null, disposables));
@@ -86,12 +86,12 @@ export namespace Event {
 	 * whenever any of the provided events emit.
 	 */
 	export function any<T>(...events: Event<T>[]): Event<T> {
-		return (listener, thisArgs = null, disposables?) => combinedDisposable(events.map(event => event(e => listener.call(thisArgs, e), null, disposables)));
+		return (listener, thisArgs = null, disposables?) => combinedDisposable(...events.map(event => event(e => listener.call(thisArgs, e), null, disposables)));
 	}
 
 	/**
 	 * Given an event and a `merge` function, returns another event which maps each element
-	 * and the cummulative result throught the `merge` function. Similar to `map`, but with memory.
+	 * and the cumulative result through the `merge` function. Similar to `map`, but with memory.
 	 */
 	export function reduce<I, O>(event: Event<I>, merge: (last: O | undefined, event: I) => O, initial?: O): Event<O> {
 		let output: O | undefined = initial;
@@ -130,7 +130,7 @@ export namespace Event {
 	 * @param leading Whether the event should fire in the leading phase of the timeout.
 	 * @param leakWarningThreshold The leak warning threshold override.
 	 */
-	export function debounce<T>(event: Event<T>, merge: (last: T, event: T) => T, delay?: number, leading?: boolean, leakWarningThreshold?: number): Event<T>;
+	export function debounce<T>(event: Event<T>, merge: (last: T | undefined, event: T) => T, delay?: number, leading?: boolean, leakWarningThreshold?: number): Event<T>;
 	export function debounce<I, O>(event: Event<I>, merge: (last: O | undefined, event: I) => O, delay?: number, leading?: boolean, leakWarningThreshold?: number): Event<O>;
 	export function debounce<I, O>(event: Event<I>, merge: (last: O | undefined, event: I) => O, delay: number = 100, leading = false, leakWarningThreshold?: number): Event<O> {
 
@@ -265,33 +265,6 @@ export namespace Event {
 		return emitter.event;
 	}
 
-	/**
-	 * Similar to `buffer` but it buffers indefinitely and repeats
-	 * the buffered events to every new listener.
-	 */
-	export function echo<T>(event: Event<T>, nextTick = false, buffer: T[] = []): Event<T> {
-		buffer = buffer.slice();
-
-		event(e => {
-			buffer.push(e);
-			emitter.fire(e);
-		});
-
-		const flush = (listener: (e: T) => any, thisArgs?: any) => buffer.forEach(e => listener.call(thisArgs, e));
-
-		const emitter = new Emitter<T>({
-			onListenerDidAdd(emitter: Emitter<T>, listener: (e: T) => any, thisArgs?: any) {
-				if (nextTick) {
-					setTimeout(() => flush(listener, thisArgs));
-				} else {
-					flush(listener, thisArgs);
-				}
-			}
-		});
-
-		return emitter.event;
-	}
-
 	export interface IChainableEvent<T> {
 		event: Event<T>;
 		map<O>(fn: (i: T) => O): IChainableEvent<O>;
@@ -299,7 +272,9 @@ export namespace Event {
 		filter(fn: (e: T) => boolean): IChainableEvent<T>;
 		reduce<R>(merge: (last: R | undefined, event: T) => R, initial?: R): IChainableEvent<R>;
 		latch(): IChainableEvent<T>;
-		on(listener: (e: T) => any, thisArgs?: any, disposables?: IDisposable[]): IDisposable;
+		debounce(merge: (last: T | undefined, event: T) => T, delay?: number, leading?: boolean, leakWarningThreshold?: number): IChainableEvent<T>;
+		debounce<R>(merge: (last: R | undefined, event: T) => R, delay?: number, leading?: boolean, leakWarningThreshold?: number): IChainableEvent<R>;
+		on(listener: (e: T) => any, thisArgs?: any, disposables?: IDisposable[] | DisposableStore): IDisposable;
 		once(listener: (e: T) => any, thisArgs?: any, disposables?: IDisposable[]): IDisposable;
 	}
 
@@ -327,7 +302,13 @@ export namespace Event {
 			return new ChainableEvent(latch(this.event));
 		}
 
-		on(listener: (e: T) => any, thisArgs: any, disposables: IDisposable[]) {
+		debounce(merge: (last: T | undefined, event: T) => T, delay?: number, leading?: boolean, leakWarningThreshold?: number): IChainableEvent<T>;
+		debounce<R>(merge: (last: R | undefined, event: T) => R, delay?: number, leading?: boolean, leakWarningThreshold?: number): IChainableEvent<R>;
+		debounce<R>(merge: (last: R | undefined, event: T) => R, delay: number = 100, leading = false, leakWarningThreshold?: number): IChainableEvent<R> {
+			return new ChainableEvent(debounce(this.event, merge, delay, leading, leakWarningThreshold));
+		}
+
+		on(listener: (e: T) => any, thisArgs: any, disposables: IDisposable[] | DisposableStore) {
 			return this.event(listener, thisArgs, disposables);
 		}
 
@@ -349,6 +330,20 @@ export namespace Event {
 		const fn = (...args: any[]) => result.fire(map(...args));
 		const onFirstListenerAdd = () => emitter.on(eventName, fn);
 		const onLastListenerRemove = () => emitter.removeListener(eventName, fn);
+		const result = new Emitter<T>({ onFirstListenerAdd, onLastListenerRemove });
+
+		return result.event;
+	}
+
+	export interface DOMEventEmitter {
+		addEventListener(event: string | symbol, listener: Function): void;
+		removeEventListener(event: string | symbol, listener: Function): void;
+	}
+
+	export function fromDOMEventEmitter<T>(emitter: DOMEventEmitter, eventName: string, map: (...args: any[]) => T = id => id): Event<T> {
+		const fn = (...args: any[]) => result.fire(map(...args));
+		const onFirstListenerAdd = () => emitter.addEventListener(eventName, fn);
+		const onLastListenerRemove = () => emitter.removeEventListener(eventName, fn);
 		const result = new Emitter<T>({ onFirstListenerAdd, onLastListenerRemove });
 
 		return result.event;
@@ -465,7 +460,7 @@ class LeakageMonitor {
  * Sample:
 	class Document {
 
-		private _onDidChange = new Emitter<(value:string)=>any>();
+		private readonly _onDidChange = new Emitter<(value:string)=>any>();
 
 		public onDidChange = this._onDidChange.event;
 
@@ -504,7 +499,7 @@ export class Emitter<T> {
 	 */
 	get event(): Event<T> {
 		if (!this._event) {
-			this._event = (listener: (e: T) => any, thisArgs?: any, disposables?: IDisposable[]) => {
+			this._event = (listener: (e: T) => any, thisArgs?: any, disposables?: IDisposable[] | DisposableStore) => {
 				if (!this._listeners) {
 					this._listeners = new LinkedList();
 				}
@@ -549,7 +544,9 @@ export class Emitter<T> {
 						}
 					}
 				};
-				if (Array.isArray(disposables)) {
+				if (disposables instanceof DisposableStore) {
+					disposables.add(result);
+				} else if (Array.isArray(disposables)) {
 					disposables.push(result);
 				}
 
@@ -606,33 +603,90 @@ export class Emitter<T> {
 	}
 }
 
+export class PauseableEmitter<T> extends Emitter<T> {
+
+	private _isPaused = 0;
+	private _eventQueue = new LinkedList<T>();
+	private _mergeFn?: (input: T[]) => T;
+
+	constructor(options?: EmitterOptions & { merge?: (input: T[]) => T }) {
+		super(options);
+		this._mergeFn = options && options.merge;
+	}
+
+	pause(): void {
+		this._isPaused++;
+	}
+
+	resume(): void {
+		if (this._isPaused !== 0 && --this._isPaused === 0) {
+			if (this._mergeFn) {
+				// use the merge function to create a single composite
+				// event. make a copy in case firing pauses this emitter
+				const events = this._eventQueue.toArray();
+				this._eventQueue.clear();
+				super.fire(this._mergeFn(events));
+
+			} else {
+				// no merging, fire each event individually and test
+				// that this emitter isn't paused halfway through
+				while (!this._isPaused && this._eventQueue.size !== 0) {
+					super.fire(this._eventQueue.shift()!);
+				}
+			}
+		}
+	}
+
+	fire(event: T): void {
+		if (this._listeners) {
+			if (this._isPaused !== 0) {
+				this._eventQueue.push(event);
+			} else {
+				super.fire(event);
+			}
+		}
+	}
+}
+
 export interface IWaitUntil {
 	waitUntil(thenable: Promise<any>): void;
 }
 
 export class AsyncEmitter<T extends IWaitUntil> extends Emitter<T> {
 
-	private _asyncDeliveryQueue: [Listener<T>, T, Promise<any>[]][];
+	private _asyncDeliveryQueue?: LinkedList<[Listener<T>, Omit<T, 'waitUntil'>]>;
 
-	async fireAsync(eventFn: (thenables: Promise<any>[], listener: Function) => T): Promise<void> {
+	async fireAsync(data: Omit<T, 'waitUntil'>, token: CancellationToken, promiseJoin?: (p: Promise<any>, listener: Function) => Promise<any>): Promise<void> {
 		if (!this._listeners) {
 			return;
 		}
 
-		// put all [listener,event]-pairs into delivery queue
-		// then emit all event. an inner/nested event might be
-		// the driver of this
 		if (!this._asyncDeliveryQueue) {
-			this._asyncDeliveryQueue = [];
+			this._asyncDeliveryQueue = new LinkedList();
 		}
 
 		for (let iter = this._listeners.iterator(), e = iter.next(); !e.done; e = iter.next()) {
-			const thenables: Promise<void>[] = [];
-			this._asyncDeliveryQueue.push([e.value, eventFn(thenables, typeof e.value === 'function' ? e.value : e.value[0]), thenables]);
+			this._asyncDeliveryQueue.push([e.value, data]);
 		}
 
-		while (this._asyncDeliveryQueue.length > 0) {
-			const [listener, event, thenables] = this._asyncDeliveryQueue.shift()!;
+		while (this._asyncDeliveryQueue.size > 0 && !token.isCancellationRequested) {
+
+			const [listener, data] = this._asyncDeliveryQueue.shift()!;
+			const thenables: Promise<any>[] = [];
+
+			const event = <T>{
+				...data,
+				waitUntil: (p: Promise<any>): void => {
+					if (Object.isFrozen(thenables)) {
+						throw new Error('waitUntil can NOT be called asynchronous');
+					}
+					if (promiseJoin) {
+						p = promiseJoin(p, typeof listener === 'function' ? listener : listener[0]);
+					}
+					thenables.push(p);
+				}
+			};
+
 			try {
 				if (typeof listener === 'function') {
 					listener.call(undefined, event);
@@ -647,7 +701,7 @@ export class AsyncEmitter<T extends IWaitUntil> extends Emitter<T> {
 			// freeze thenables-collection to enforce sync-calls to
 			// wait until and then wait for all thenables to resolve
 			Object.freeze(thenables);
-			await Promise.all(thenables);
+			await Promise.all(thenables).catch(e => onUnexpectedError(e));
 		}
 	}
 }
@@ -775,7 +829,7 @@ export class Relay<T> implements IDisposable {
 	private inputEvent: Event<T> = Event.None;
 	private inputEventListener: IDisposable = Disposable.None;
 
-	private emitter = new Emitter<T>({
+	private readonly emitter = new Emitter<T>({
 		onFirstListenerDidAdd: () => {
 			this.listening = true;
 			this.inputEventListener = this.inputEvent(this.emitter.fire, this.emitter);
